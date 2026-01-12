@@ -1,0 +1,15 @@
+#!/bin/bash
+# Riceve: URL, PROFILO, BINARIO_BROWSER
+
+APP_URL="$1"
+PROFILE_DIR="$2"
+BROWSER_BIN=$(echo "$3" | tr -d '"')
+
+if [[ -n "$APP_URL" ]]; then
+  # Lancio pulito senza terminale appeso
+  nohup "$BROWSER_BIN" --profile-directory="$PROFILE_DIR" --app="$APP_URL" >/dev/null 2>&1 &
+  disown
+  exit 0
+else
+  exit 1
+fi

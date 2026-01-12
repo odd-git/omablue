@@ -1,0 +1,62 @@
+#!/bin/bash
+
+# Forza il path corretto per trovare gum
+export PATH="$HOME/.local/share/omablue/bin:$PATH"
+
+# Check if gum is installed
+if ! command -v gum &> /dev/null; then
+    echo "Error: gum is not installed."
+    exit 1
+fi
+
+# Check if brew is installed
+if ! command -v brew &> /dev/null; then
+    echo "Error: Homebrew non è installato."
+    exit 1
+fi
+
+echo "Caricamento pacchetti installati..."
+
+# 1. Recupera la lista di pacchetti (Formulae e Casks)
+# Aggiungiamo un'etichetta per chiarezza
+FORMULAE=$(brew list --formula | awk '{print $1 " [formula]"}')
+CASKS=$(brew list --cask | awk '{print $1 " [cask]"}')
+LIST=$(echo -e "$FORMULAE\n$CASKS" | sed '/^$/d' | sort)
+
+if [[ -z "$LIST" ]]; then
+    echo "Nessun pacchetto Homebrew trovato."
+    notify-send "Omarchy" "Nessun pacchetto da rimuovere."
+    exit 0
+fi
+
+# 2. Selezione tramite Gum (Checkbox style)
+SELECTED=$(echo "$LIST" | gum choose \
+    --no-limit \
+    --header "Seleziona i pacchetti Brew da rimuovere (Spazio per selezionare, Invio per confermare)" \
+    --selected-prefix="[X] " \
+    --unselected-prefix="[ ] " \
+    --cursor-prefix="> ")
+
+# Se l'utente preme ESC o non seleziona nulla
+if [[ -z "$SELECTED" ]]; then
+    echo "Operazione annullata."
+    exit 0
+fi
+
+# 3. Processo di rimozione
+clear
+# Estraiamo solo i nomi dei pacchetti (prima colonna)
+PACKAGE_NAMES=$(echo "$SELECTED" | awk '{print $1}')
+
+for PACKAGE in $PACKAGE_NAMES; do
+    echo -e "Rimozione di: \e[33m$PACKAGE\e[0m..."
+    
+    # Eseguiamo la disinstallazione
+    if brew uninstall "$PACKAGE"; then
+        notify-send "Omarchy" "Rimosso: $PACKAGE"
+    else
+        echo "Errore durante la rimozione di $PACKAGE"
+    fi
+done
+
+echo -e "\n\e[32mOperazione conclusa.\e[0m"

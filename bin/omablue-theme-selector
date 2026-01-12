@@ -1,0 +1,32 @@
+#!/bin/bash
+
+# Omablue Theme Selector - The Secureblue Architect Tool
+
+# 2. PATH Setup Robusto (per trovare gum e jq ovunque)
+
+export PATH="$HOME/.local/share/omablue/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+OMABIN="$HOME/.local/share/omablue/bin"
+# 1. Ottieni la lista dei temi (usando lo script esistente)
+# Se hai già rinominato omarchy-theme-list in omablue-theme-list, cambia qui.
+THEME_LIST=$(omablue-theme-list)
+
+# 2. Selezione tramite FZF
+# Configuriamo FZF per un look pulito e centrato
+SELECTED_THEME=$(echo "$THEME_LIST" | fzf \
+  --height=100% \
+  --layout=reverse \
+  --border=rounded \
+  --prompt="🎨 Choose your Theme: " \
+  --header="[Enter] Apply | [ESC] Exit" \
+  --color="bg+:#313244,bg:#1e1e2e,spinner:#f5e0dc,hl:#f38ba8" \
+  --color="fg:#cdd6f4,header:#94e2d5,info:#cba6f7,pointer:#f5e0dc" \
+  --color="marker:#f5e0dc,fg+:#cdd6f4,prompt:#cba6f7,hl+:#f38ba8")
+
+# 3. Esecuzione
+if [[ -n "$SELECTED_THEME" ]]; then
+  # Applica il tema usando il motore Omablue
+  omablue-theme-set "$SELECTED_THEME"
+else
+  echo "Selection aborted."
+  exit 0
+fi

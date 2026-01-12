@@ -1,0 +1,72 @@
+#!/bin/bash
+
+# Omablue: The Secureblue Theme Engine
+# Architecture: Atomic / Sway / Ghostty / Dunst
+
+if [[ -z $1 && $1 != "CNCLD" ]]; then
+  echo "Usage: omablue-theme-set <theme-name>"
+  exit 1
+fi
+
+THEMES_DIR="$HOME/.config/omablue/themes"
+CURRENT_THEME_LINK="$HOME/.config/ombalue/current/theme"
+
+# Normalizzazione nome tema
+THEME_NAME=$(echo "$1" | sed -E 's/<[^>]+>//g' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
+THEME_PATH="$THEMES_DIR/$THEME_NAME"
+
+if [[ ! -d "$THEME_PATH" ]]; then
+  echo "❌ Theme '$THEME_NAME' non trovato in $THEMES_DIR"
+  exit 1
+fi
+
+# 1. Update Symlink del Tema (Atomic Workflow)
+ln -nsf "$THEME_PATH" "$CURRENT_THEME_LINK"
+
+# 2. Gestione Ghostty (Masterword focus)
+# Creiamo un link per il file colori di Ghostty
+if [[ -f "$THEME_PATH/ghostty.conf" ]]; then
+  ln -nsf "$THEME_PATH/ghostty.conf" "$HOME/.config/ghostty/theme_current"
+  # Invia segnale a Ghostty per ricaricare la config senza chiudere il terminale
+  pkill -USR1 ghostty
+fi
+
+# 3. Gestione Dunst (Strategia Atomic Fusion)
+# Definiamo i percorsi
+DUNST_BASE="$HOME/.config/dunst/dunstrc.base"
+DUNST_TARGET="$HOME/.config/dunst/dunstrc"
+THEME_DUNST="$THEME_PATH/dunst.conf"
+
+if [[ -f "$DUNST_BASE" && -f "$THEME_DUNST" ]]; then
+  echo "⚙️  Rigenerazione configurazione Dunst..."
+
+  # FUSIONE: Scrive la base + il tema nel file target
+  cat "$DUNST_BASE" "$THEME_DUNST" >"$DUNST_TARGET"
+
+  # Riavvio pulito
+  # Uccidiamo dunst se è attivo, poi inviamo una notifica per riattivarlo via DBus
+  killall dunst 2>/dev/null
+
+  # Piccola pausa per assicurare che il processo sia morto
+  sleep 0.5
+
+  notify-send -h string:x-dunst-stack-tag:system_hud "Omablue" "Tema Dunst applicato: $THEME_NAME"
+else
+  echo "⚠️  Attenzione: Impossibile generare dunstrc."
+  echo "   Verifica che esistano: $DUNST_BASE e $THEME_DUNST"
+fi
+
+# 4. Sway Reload (Sostituisce hyprctl)
+swaymsg reload
+
+# 5. Sfondo (Swaybg via Omarchy script adattato)
+omarchy-theme-bg-next
+
+# 6. Altri componenti Omarchy (GNOME, Browser, Obsidian)
+# Questi verranno rinominati gradualmente in omablue-*
+omarchy-theme-set-gnome
+omarchy-theme-set-browser
+omarchy-theme-set-obsidian
+
+# 7. Feedback Visivo (Omablue HUD)
+notify-send -h string:x-dunst-stack-tag:system_hud "Tema Applicato" "Ambiente: Omablue\nTema: $THEME_NAME" -i color-management

@@ -1,0 +1,19 @@
+#!/bin/bash
+
+# --- Configurazione ---
+# Assicuriamoci che il PATH includa i binari locali
+export PATH="$HOME/.local/share/omablue/bin:$PATH"
+
+# Titolo per la notifica
+TITLE="Omablue Ujust"
+
+# Controlliamo se ujust è installato
+if ! command -v ujust &> /dev/null; then
+    notify-send "$TITLE" "Errore: ujust non è installato nel sistema."
+    exit 1
+fi
+
+# Lancio di ujust in modalità scelta interattiva
+# Usiamo --choose che è il comando standard di ujust per mostrare i task disponibili
+echo "Avvio di ujust --choose..."
+exec ujust --choose

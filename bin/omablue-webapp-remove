@@ -1,0 +1,63 @@
+#!/bin/bash
+# Forza il path corretto per trovare gum
+export PATH="$HOME/.local/share/omablue/bin:$PATH"
+
+ICON_DIR="$HOME/.local/share/applications/icons"
+DESKTOP_DIR="$HOME/.local/share/applications"
+
+# Array per memorizzare le app trovate
+WEB_APPS=()
+
+if [ "$#" -eq 0 ]; then
+  # 1. Scansione delle Web App installate
+  # Cerchiamo i file .desktop che richiamano lo script di lancio omarchy
+  while IFS= read -r -d '' file; do
+    if grep -q 'omablue-launch-webapp' "$file"; then
+      WEB_APPS+=("$(basename "${file%.desktop}")")
+    fi
+  done < <(find "$DESKTOP_DIR" -maxdepth 1 -name '*.desktop' -print0)
+
+  # 2. Controllo se ci sono app da rimuovere
+  if ((${#WEB_APPS[@]} == 0)); then
+    echo "Nessuna web app trovata da rimuovere."
+    notify-send "Omarchy" "Nessuna web app trovata."
+    exit 0
+  fi
+
+  # 3. Selezione tramite Gum
+  # Sort degli elementi per ordine alfabetico
+  IFS=$'\n' SORTED_APPS=($(sort <<<"${WEB_APPS[*]}"))
+  unset IFS
+
+  SELECTED=$(gum choose --no-limit --header "Seleziona le app da rimuovere (Spazio per selezionare, Invio per confermare)" --selected-prefix="[X] " --unselected-prefix="[ ] " "${SORTED_APPS[@]}")
+
+  # Se l'utente preme ESC o non seleziona nulla
+  if [[ -z "$SELECTED" ]]; then
+    echo "Operazione annullata."
+    exit 0
+  fi
+
+  # Convertiamo la selezione in un array (gestendo i nomi con spazi)
+  mapfile -t APP_NAMES <<<"$SELECTED"
+else
+  # Se i nomi sono passati come argomenti
+  APP_NAMES=("$@")
+fi
+
+# 4. Processo di rimozione
+for APP_NAME in "${APP_NAMES[@]}"; do
+  # Rimuoviamo il file .desktop
+  if [[ -f "$DESKTOP_DIR/$APP_NAME.desktop" ]]; then
+    rm -f "$DESKTOP_DIR/$APP_NAME.desktop"
+    echo "Rimosso file desktop: $APP_NAME"
+  fi
+
+  # Rimuoviamo l'icona (proviamo sia .png che altre estensioni comuni)
+  rm -f "$ICON_DIR/$APP_NAME.png"
+  rm -f "$ICON_DIR/$APP_NAME.jpg"
+
+  notify-send "Omarchy" "Rimosso: $APP_NAME"
+  echo "Rimozione di $APP_NAME completata."
+done
+
+echo -e "\n\e[32mOperazione conclusa.\e[0m"

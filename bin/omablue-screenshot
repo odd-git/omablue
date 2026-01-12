@@ -1,0 +1,53 @@
+#!/bin/bash
+
+# Force the window title for Sway window rules
+echo -ne "\033]0;omablue-screenshot\007"
+
+# Path for gum, utilities, and Homebrew
+export PATH="/home/linuxbrew/.linuxbrew/bin:$HOME/.local/share/omablue/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+# Setup save directory
+SAVE_DIR="$HOME/Pictures/Screenshots"
+mkdir -p "$SAVE_DIR"
+TIMESTAMP=$(date +'%Y-%m-%d-%H%M%S')
+FILE_PATH="$SAVE_DIR/screenshot_$TIMESTAMP.png"
+
+# Interactive menu using gum
+CHOICE=$(gum choose --header "What do you want to capture?" "Select Area" "Active Window" "Fullscreen" "Cancel")
+
+case $CHOICE in
+"Select Area")
+  # Move the menu to scratchpad to clear the view
+  swaymsg [title="omablue-screenshot"] move scratchpad
+  sleep 0.2
+  GEOMETRY=$(slurp)
+  ;;
+"Active Window")
+  # Move the menu to scratchpad to capture the window underneath
+  swaymsg [title="omablue-screenshot"] move scratchpad
+  sleep 0.2
+  # Get coordinates of the currently focused window via swaymsg and jq
+  GEOMETRY=$(swaymsg -t get_tree | jq -r '.. | select(.focused? == true).rect | "\(.x),\(.y) \(.width)x\(.height)"')
+  ;;          # This was missing in your snippet
+"Fullscreen") # Fixed the missing " at the start
+  swaymsg [title="omablue-screenshot"] move scratchpad
+  sleep 0.2
+  GEOMETRY=""
+  ;;
+*)
+  exit 0
+  ;;
+esac
+
+# Execute capture
+if [ -z "$GEOMETRY" ]; then
+  grim "$FILE_PATH"
+else
+  grim -g "$GEOMETRY" "$FILE_PATH"
+fi
+
+# Notify and copy to clipboard
+if [ -f "$FILE_PATH" ]; then
+  wl-copy <"$FILE_PATH"
+  notify-send "Omablue Screenshot" "Saved and copied to clipboard" -i camera-photo
+fi

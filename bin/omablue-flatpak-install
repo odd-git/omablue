@@ -1,0 +1,30 @@
+#!/bin/bash
+
+# Check if fzf is installed
+if ! command -v fzf &>/dev/null; then
+  echo "Error: fzf is not installed."
+  exit 1
+fi
+
+echo "Fetching Flatpak list... please wait."
+
+# 1. Fetch the list from remotes
+# 2. Use fzf to filter (using --header-line to keep the columns aligned)
+# 3. Use awk to grab the Application ID (first column)
+selected_app=$(flatpak remote-ls --columns=application,name,description | fzf \
+  --header='Select an application to install' \
+  --prompt='Search Flatpaks > ' \
+  --layout=reverse \
+  --height=80% | awk '{print $1}')
+
+# If no app was selected (user pressed ESC), exit gracefully
+if [ -z "$selected_app" ]; then
+  echo "No application selected. Exiting."
+  exit 0
+fi
+
+# Clear the screen and start installation
+clear
+echo "Starting installation of: $selected_app"
+echo "----------------------------------------"
+flatpak install "$selected_app"
