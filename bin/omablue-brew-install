@@ -1,55 +1,65 @@
 #!/bin/bash
 
-# Forza il path per trovare eventuali utility locali
+# Force path for local utilities
 export PATH="$HOME/.local/share/omablue/bin:$PATH"
 
-# Check if fzf is installed
-if ! command -v fzf &> /dev/null; then
-    echo "Error: fzf is not installed."
-    exit 1
+# Check dependencies
+if ! command -v fzf &>/dev/null; then
+  echo "Error: fzf is not installed."
+  read -p "Press Enter to exit..."
+  exit 1
 fi
 
-# Check if brew is installed
-if ! command -v brew &> /dev/null; then
-    echo "Error: Homebrew (brew) non è installato."
-    exit 1
+if ! command -v brew &>/dev/null; then
+  echo "Error: Homebrew is not installed."
+  read -p "Press Enter to exit..."
+  exit 1
 fi
 
-echo "Caricamento lista pacchetti Homebrew (Formulae & Casks)..."
+echo "Fetching Homebrew packages (Formulae & Casks)..."
 
-# Recuperiamo sia i pacchetti CLI che le App GUI
-# Aggiungiamo un'etichetta per distinguerli nel menu
-LIST=$( (brew formulae | awk '{print $1 " [formula]"}'; brew casks | awk '{print $1 " [cask]"}') )
+# Combine formulae and casks for selection
+LIST=$( (
+  brew formulae | awk '{print $1 " [formula]"}'
+  brew casks | awk '{print $1 " [cask]"}'
+))
 
 if [[ -z "$LIST" ]]; then
-    echo "Errore nel recupero della lista Brew."
-    exit 1
+  echo "Error retrieving Brew list."
+  read -p "Press Enter to exit..."
+  exit 1
 fi
 
-# Selezione tramite fzf
+# Selection via fzf
 SELECTED=$(echo "$LIST" | fzf \
-    --header='Seleziona un pacchetto Homebrew da installare' \
-    --prompt='Search Brew > ' \
-    --layout=reverse \
-    --height=80% \
-    --border)
+  --header='Select Homebrew package to install' \
+  --prompt='Search Brew > ' \
+  --layout=reverse \
+  --height=80% \
+  --border)
 
-# Se l'utente preme ESC o non seleziona nulla
 if [[ -z "$SELECTED" ]]; then
-    echo "Operazione annullata."
-    exit 0
+  echo "Operation cancelled."
+  sleep 1
+  exit 0
 fi
 
-# Estraiamo solo il nome del pacchetto (rimuovendo l'etichetta [formula] o [cask])
+# Extract package name
 PACKAGE=$(echo "$SELECTED" | awk '{print $1}')
 
-# Processo di installazione
 clear
-echo -e "Installazione di: \e[33m$PACKAGE\e[0m\n"
+echo -e "Installing: \e[33m$PACKAGE\e[0m\n"
 
+# Installation process with persistence logic
 if brew install "$PACKAGE"; then
-    notify-send "Omarchy" "Installazione completata: $PACKAGE"
-    echo -e "\n\e[32mOperazione conclusa.\e[0m"
+  # Send notification to Dunst
+  notify-send -a "Omablue" -i "package-x-generic" "Install Success" "Package: $PACKAGE"
+  echo -e "\n\e[32mInstallation finished successfully.\e[0m"
 else
-    echo -e "\n\e[31mErrore durante l'installazione di $PACKAGE.\e[0m"
+  notify-send -u critical -a "Omablue" "Install Failed" "Error during $PACKAGE installation"
+  echo -e "\n\e[31mError occurred during installation of $PACKAGE.\e[0m"
 fi
+
+# Force terminal to stay open until user action
+echo -e "\n---"
+read -p "Press [Enter] to close this window..."

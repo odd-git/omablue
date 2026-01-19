@@ -1,22 +1,22 @@
 #!/bin/bash
 
-# --- 1. Configurazione Percorsi e Variabili ---
-# Recuperiamo il percorso della cartella dove risiede lo script
+# --- 1. Global Environment & Path Injection ---
+# We force Homebrew and local bins into the PATH so the menu and its children see them.
+HOMEBREW_PATHS="/home/linuxbrew/.linuxbrew/bin:/var/home/linuxbrew/.linuxbrew/bin"
+LOCAL_PATHS="$HOME/.local/bin:$HOME/.local/share/omablue/bin"
+export PATH="$HOMEBREW_PATHS:$LOCAL_PATHS:/usr/local/bin:/usr/bin:/bin:$PATH"
+
 OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PATH="$OMABIN:$PATH"
 
-# Il terminale da usare (Ghostty supporta --class per definire l'app_id)
 TERMINAL="ghostty"
-# ID unico per le regole di Sway (permette di rendere queste finestre flottanti)
 TUI_CLASS="omablue-floating"
 
-# Flag per gestire l'uscita
 BACK_TO_EXIT=false
 [[ -n "${1-}" ]] && BACK_TO_EXIT=true
 
-# --- 2. Funzioni Core ---
+# --- 2. Core Functions ---
 
-# Torna al menu principale o esce
 back_to() {
   if [[ "$BACK_TO_EXIT" == "true" ]]; then
     exit 0
@@ -25,112 +25,104 @@ back_to() {
   fi
 }
 
-# Funzione per lanciare Rofi e gestire l'uscita con ESC
 menu() {
   local prompt="$1"
-  local options="$2"
+  shift
+  local options
+  options=$(printf "%s\n" "$@")
   local selection
-
   selection=$(echo -e "$options" | rofi -dmenu -i -p "$prompt" -theme my_theme.rasi)
-
-  # Se l'exit code non è 0 (es. premuto ESC), chiude lo script
-  if [[ $? -ne 0 ]]; then
-    exit 0
-  fi
-
+  if [[ $? -ne 0 ]]; then exit 0; fi
   echo "$selection"
 }
 
-# Funzione per lanciare gli script TUI con un app_id specifico
 run_tui() {
   local script_path="$1"
-  # Usiamo un titolo univoco e semplice
   local UNIQUE_TITLE="OMABLUE_POPUP"
 
   if [[ -x "$script_path" ]]; then
-    nohup $TERMINAL --title="$UNIQUE_TITLE" -e bash -ic "$script_path" >/dev/null 2>&1 &
-    exit 0
+    # Se lo script usa GUM o non usa ROFI, FORZA il terminale
+    if grep -q "gum" "$script_path" || ! grep -q "rofi" "$script_path"; then
+      # Usiamo Ghostty con il comando corretto per restare aperto o eseguire il login shell
+      nohup $TERMINAL --class="$TUI_CLASS" --title="$UNIQUE_TITLE" -e /bin/bash -l -c "$script_path" >/dev/null 2>&1 &
+    else
+      # Se è un'app ROFI pura, lancia direttamente
+      nohup "$script_path" >/dev/null 2>&1 &
+    fi
+    # NON uscire immediatamente se vuoi che il menu resti sotto (opzionale)
+    # exit 0
   else
-    notify-send "Errore" "Script non trovato"
+    notify-send -u critical "Error" "Script non trovato: $(basename "$script_path")"
   fi
 }
-# --- 3. Sottomenu ---
+
+# --- 3. Submenus ---
 
 show_install_menu() {
   local choice
-  choice=$(menu "Install" "󰖟  Webapp\n  Brew\n  Ujust\n󰇄  Tui\n  Flatpak")
-
-  case "$choice" in
-  *Webapp*) run_tui "$OMABIN/omablue-webapp-install" ;;
-  *Ujust*) run_tui "$OMABIN/omablue-install-ujust" ;;
-  *Tui*) run_tui "$OMABIN/omarchy-tui-install" ;;
-  *Brew*) run_tui "$OMABIN/omablue-brew-install" ;;
-  *Flatpak*) run_tui "$OMABIN/omablue-flatpak-install" ;;
+  choice=$(menu "Install" "󰖟 Webapp" " Brew" " Ujust" "󰆍 Tui" " Flatpak")
+  case "${choice,,}" in
+  *webapp*) run_tui "$OMABIN/omablue-webapp-install" ;;
+  *brew*) run_tui "$OMABIN/omablue-brew-install" ;;
+  *ujust*) run_tui "$OMABIN/omablue-install-ujust" ;;
+  *tui*) run_tui "$OMABIN/omarchy-tui-install" ;;
+  *flatpak*) run_tui "$OMABIN/omablue-flatpak-install" ;;
   *) back_to ;;
   esac
 }
 
 show_remove_menu() {
   local choice
-  choice=$(menu "Remove" "󰖟  Webapp\n  Brew\n  Ujust\n󰇄  Tui\n  Flatpak")
-
-  case "$choice" in
-  *Webapp*) run_tui "$OMABIN/omablue-webapp-remove" ;;
-  *Tui*) run_tui "$OMABIN/omarchy-tui-remove" ;;
-  *Brew*) run_tui "$OMABIN/omablue-brew-remove" ;;
-  *Flatpak*) run_tui "$OMABIN/omablue-flatpak-remove" ;;
+  choice=$(menu "Remove" "󰖟 Webapp" " Brew" "󰆍 Tui" " Flatpak")
+  case "${choice,,}" in
+  *webapp*) run_tui "$OMABIN/omablue-webapp-remove" ;;
+  *brew*) run_tui "$OMABIN/omablue-brew-remove" ;;
+  *tui*) run_tui "$OMABIN/omarchy-tui-remove" ;;
+  *flatpak*) run_tui "$OMABIN/omablue-flatpak-remove" ;;
   *) back_to ;;
   esac
 }
 
 show_setup_menu() {
   local choice
-  choice=$(menu "Setup" "Theme")
-
+  choice=$(menu "Setup" "󱓞 Theme" "󰂯 Bluetooth" "󰓃 Mixer" "󰖩 Network")
   case "${choice,,}" in
-  *theme*)
-    run_tui "$OMABIN/omablue-theme-selector"
-    ;;
-  *)
-    back_to
-    ;;
+  *theme*) run_tui "$OMABIN/omablue-theme-selector" ;;
+  *bluetooth*) run_tui "$OMABIN/omablue-bluetooth" ;;
+  *mixer*) run_tui "$OMABIN/omablue-mixer" ;;
+  *network*) run_tui "$OMABIN/omablue-nmcli" ;;
+  *) back_to ;;
   esac
 }
 
 show_system_menu() {
   local choice
-  choice=$(menu "System" "  Lock\n󰜉  Restart\n󰐥  Shutdown")
-  case "$choice" in
-  *Lock*) swaylock ;;
-  *Restart*) systemctl reboot ;;
-  *Shutdown*) systemctl poweroff ;;
+  choice=$(menu "System" " Lock" "󰜉 Restart" "󰐥 Shutdown")
+  case "${choice,,}" in
+  *lock*) swaylock ;;
+  *restart*) systemctl reboot ;;
+  *shutdown*) systemctl poweroff ;;
   *) back_to ;;
   esac
 }
 
-# --- 4. Menu Principale e Routing ---
+# --- 4. Main Menu ---
 
 show_main_menu() {
   local choice
-  choice=$(menu "Go" "󰀻  Apps\n󰐕  Install\n󰛌  Remove\n  Setup\n  System")
-  go_to_menu "$choice"
-}
-
-go_to_menu() {
-  local target="${1,,}" # Converte in minuscolo
-  case "$target" in
-  *apps*) rofi -show drun -no-show-icons -drun-display-format "{name}" -theme my_theme.rasi ;;
+  choice=$(menu "Go" "󰀻 Apps" "󰐕 Install" "󰛌 Remove" " Setup" " System")
+  case "${choice,,}" in
+  *apps*) rofi -show drun -no-show-icons -theme my_theme.rasi ;;
   *install*) show_install_menu ;;
   *remove*) show_remove_menu ;;
   *setup*) show_setup_menu ;;
   *system*) show_system_menu ;;
-  *) [[ -n "$target" ]] && show_main_menu ;;
+  *) [[ -n "$choice" ]] && show_main_menu ;;
   esac
 }
 
-# --- 5. Entry Point ---
 if [[ -n "${1-}" ]]; then
-  go_to_menu "$1"
+  show_main_menu
 else
   show_main_menu
 fi

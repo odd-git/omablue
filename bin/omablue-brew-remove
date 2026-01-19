@@ -1,62 +1,67 @@
 #!/bin/bash
 
-# Forza il path corretto per trovare gum
+# Force correct path for gum and brew
 export PATH="$HOME/.local/share/omablue/bin:$PATH"
 
-# Check if gum is installed
-if ! command -v gum &> /dev/null; then
-    echo "Error: gum is not installed."
-    exit 1
+# Check dependencies
+if ! command -v gum &>/dev/null; then
+  echo "Error: gum is not installed."
+  read -n 1 -s -r -p "Press any key to exit..."
+  exit 1
 fi
 
-# Check if brew is installed
-if ! command -v brew &> /dev/null; then
-    echo "Error: Homebrew non è installato."
-    exit 1
+if ! command -v brew &>/dev/null; then
+  echo "Error: Homebrew is not installed."
+  read -n 1 -s -r -p "Press any key to exit..."
+  exit 1
 fi
 
-echo "Caricamento pacchetti installati..."
+echo "Loading installed packages..."
 
-# 1. Recupera la lista di pacchetti (Formulae e Casks)
-# Aggiungiamo un'etichetta per chiarezza
+# 1. Fetch installed packages (Formulae and Casks)
 FORMULAE=$(brew list --formula | awk '{print $1 " [formula]"}')
 CASKS=$(brew list --cask | awk '{print $1 " [cask]"}')
 LIST=$(echo -e "$FORMULAE\n$CASKS" | sed '/^$/d' | sort)
 
 if [[ -z "$LIST" ]]; then
-    echo "Nessun pacchetto Homebrew trovato."
-    notify-send "Omarchy" "Nessun pacchetto da rimuovere."
-    exit 0
+  echo "No Homebrew packages found."
+  notify-send -a "Omablue" "Cleanup" "No packages to remove."
+  read -n 1 -s -r -p "Press any key to exit..."
+  exit 0
 fi
 
-# 2. Selezione tramite Gum (Checkbox style)
+# 2. Multi-selection via Gum
+# Space to select, Enter to confirm
 SELECTED=$(echo "$LIST" | gum choose \
-    --no-limit \
-    --header "Seleziona i pacchetti Brew da rimuovere (Spazio per selezionare, Invio per confermare)" \
-    --selected-prefix="[X] " \
-    --unselected-prefix="[ ] " \
-    --cursor-prefix="> ")
+  --no-limit \
+  --header "Select Brew packages to REMOVE" \
+  --selected-prefix="[X] " \
+  --unselected-prefix="[ ] " \
+  --cursor-prefix="> " \
+  --selected.foreground="160") # Red color for removal warning
 
-# Se l'utente preme ESC o non seleziona nulla
+# Exit if nothing selected
 if [[ -z "$SELECTED" ]]; then
-    echo "Operazione annullata."
-    exit 0
+  echo "Operation cancelled."
+  sleep 1
+  exit 0
 fi
 
-# 3. Processo di rimozione
+# 3. Removal Process
 clear
-# Estraiamo solo i nomi dei pacchetti (prima colonna)
 PACKAGE_NAMES=$(echo "$SELECTED" | awk '{print $1}')
 
 for PACKAGE in $PACKAGE_NAMES; do
-    echo -e "Rimozione di: \e[33m$PACKAGE\e[0m..."
-    
-    # Eseguiamo la disinstallazione
-    if brew uninstall "$PACKAGE"; then
-        notify-send "Omarchy" "Rimosso: $PACKAGE"
-    else
-        echo "Errore durante la rimozione di $PACKAGE"
-    fi
+  echo -e "Removing: \e[31m$PACKAGE\e[0m..."
+
+  if brew uninstall "$PACKAGE"; then
+    notify-send -a "Omablue" -i "user-trash" "Removed" "$PACKAGE has been uninstalled."
+  else
+    echo -e "\e[31mError during removal of $PACKAGE\e[0m"
+  fi
 done
 
-echo -e "\n\e[32mOperazione conclusa.\e[0m"
+# Keep terminal open to verify logs
+echo -e "\n\e[32mCleanup process finished.\e[0m"
+echo "--------------------------------"
+read -p "Press [Enter] to close this window..."

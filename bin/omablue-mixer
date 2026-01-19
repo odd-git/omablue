@@ -1,0 +1,52 @@
+#!/usr/bin/env bash
+
+# --- Secureblue Sway Architect: Audio Manager ---
+# Optimized for Pipewire/Wireplumber hardware endpoints
+
+get_vol() {
+  wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print $2 * 100}'
+}
+
+notify_vol() {
+  vol=$(get_vol)
+  notify-send -a "Audio" -h int:value:"$vol" -h string:x-dunst-stack-tag:audio "Volume: ${vol}%"
+}
+
+# Main Menu
+OPTIONS="󰓃 Select Output\n󰍬 Select Input (Mic)\n󰔡 Toggle Mute\n󰝝 Set Volume"
+CHOSEN=$(echo -e "$OPTIONS" | rofi -dmenu -p "Audio" -i -width 25)
+
+case "$CHOSEN" in
+*"Select Output")
+  SINK_LIST=$(wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\.' | sed 's/[│├└─]//g; s/^[[:space:]]*//')
+  SEL_SINK=$(echo -e "$SINK_LIST" | rofi -dmenu -p "Output Device" -i)
+
+  if [ -n "$SEL_SINK" ]; then
+    SINK_ID=$(echo "$SEL_SINK" | grep -oE '^[0-9]+')
+    wpctl set-default "$SINK_ID" && notify-send -a "Audio" "Output: $SEL_SINK"
+  fi
+  ;;
+
+*"Select Input")
+  SOURCE_LIST=$(wpctl status | sed -n '/Sources:/,/Filters:/p' | grep -E '[0-9]+\.' | sed 's/[│├└─]//g; s/^[[:space:]]*//')
+  SEL_SOURCE=$(echo -e "$SOURCE_LIST" | rofi -dmenu -p "Microphone" -i)
+
+  if [ -n "$SEL_SOURCE" ]; then
+    SOURCE_ID=$(echo "$SEL_SOURCE" | grep -oE '^[0-9]+')
+    wpctl set-default "$SOURCE_ID" && notify-send -a "Audio" "Mic: $SEL_SOURCE"
+  fi
+  ;;
+
+*"Toggle Mute")
+  wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+  notify-send -a "Audio" "Mute Toggled"
+  ;;
+
+*"Set Volume")
+  VOL_VAL=$(seq 0 5 100 | rofi -dmenu -p "Set Volume %" -i)
+  if [ -n "$VOL_VAL" ]; then
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ "$VOL_VAL%"
+    notify_vol
+  fi
+  ;;
+esac

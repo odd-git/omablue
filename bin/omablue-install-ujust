@@ -1,19 +1,31 @@
 #!/bin/bash
 
-# --- Configurazione ---
-# Assicuriamoci che il PATH includa i binari locali
+# --- Secureblue Header ---
+# Ensure the local binary path is included for custom recipes
 export PATH="$HOME/.local/share/omablue/bin:$PATH"
 
-# Titolo per la notifica
+# Notification metadata
 TITLE="Omablue Ujust"
 
-# Controlliamo se ujust è installato
-if ! command -v ujust &> /dev/null; then
-    notify-send "$TITLE" "Errore: ujust non è installato nel sistema."
-    exit 1
+# 1. Dependency Check
+# Verify if ujust is present in the immutable system path
+if ! command -v ujust &>/dev/null; then
+  notify-send -u critical "$TITLE" "Error: ujust is not installed or not in PATH."
+  exit 1
 fi
 
-# Lancio di ujust in modalità scelta interattiva
-# Usiamo --choose che è il comando standard di ujust per mostrare i task disponibili
-echo "Avvio di ujust --choose..."
-exec ujust --choose
+# 2. Execution Logic
+# We remove 'exec' to prevent the terminal from closing immediately after the command
+echo "Starting ujust --choose..."
+echo "Please follow the on-screen prompts for system configuration."
+echo "------------------------------------------------------------"
+
+# Run ujust choose directly
+ujust --choose
+
+# 3. Persistence Layer (Omarchy Style)
+# This prevents the terminal window (e.g., foot) from vanishing before you see the result
+echo ""
+echo "------------------------------------------------------------"
+echo "Task completed. Press [Enter] to close this window."
+read -r

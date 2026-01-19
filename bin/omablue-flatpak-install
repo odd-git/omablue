@@ -1,30 +1,67 @@
 #!/bin/bash
 
-# Check if fzf is installed
+# --- Secureblue Header ---
+PATH="/usr/bin:/usr/local/bin:$PATH"
+
+# 1. Dependency Check
 if ! command -v fzf &>/dev/null; then
-  echo "Error: fzf is not installed."
+  notify-send -u critical "Error" "fzf is required. Install it via brew or rpm-ostree."
   exit 1
 fi
 
-echo "Fetching Flatpak list... please wait."
+# 2. Remote Auto-Detection
+# Cerchiamo un remote che contenga 'flathub' nel nome.
+# Se non c'è, prendiamo il primo remote disponibile nella lista.
+TARGET_REMOTE=$(flatpak remotes --columns=name | grep -i "flathub" | head -n 1)
 
-# 1. Fetch the list from remotes
-# 2. Use fzf to filter (using --header-line to keep the columns aligned)
-# 3. Use awk to grab the Application ID (first column)
-selected_app=$(flatpak remote-ls --columns=application,name,description | fzf \
-  --header='Select an application to install' \
-  --prompt='Search Flatpaks > ' \
+# Fallback di sicurezza: se grep non trova nulla, usa il primo remote della lista
+if [ -z "$TARGET_REMOTE" ]; then
+  TARGET_REMOTE=$(flatpak remotes --columns=name | head -n 1)
+fi
+
+# Se ancora vuoto, allora davvero non ci sono remote
+if [ -z "$TARGET_REMOTE" ]; then
+  notify-send -u critical "Flatpak Error" "Nessun remote configurato (nè flathub nè altri)."
+  exit 1
+fi
+
+notify-send -u low -i "system-search" "Flatpak Browser" "Fetching list from: $TARGET_REMOTE..."
+
+# 3. Fetching Data
+# Usiamo il remote rilevato ($TARGET_REMOTE) invece di scriverlo a mano
+formatted_list=$(flatpak remote-ls "$TARGET_REMOTE" --app --columns=name,application,version |
+  awk -F'\t' 'BEGIN {print "NAME\tID\tVERSION"} {printf "%-30s\t%-40s\t%-15s\n", $1, $2, $3}')
+
+# 4. Interactive Selection (Omarchy Style)
+selected_line=$(echo "$formatted_list" | fzf \
+  --header-lines=1 \
+  --prompt="Install from $TARGET_REMOTE > " \
   --layout=reverse \
-  --height=80% | awk '{print $1}')
+  --height=60% \
+  --border \
+  --ansi)
 
-# If no app was selected (user pressed ESC), exit gracefully
-if [ -z "$selected_app" ]; then
-  echo "No application selected. Exiting."
+# Exit se l'utente preme ESC
+if [ -z "$selected_line" ]; then
   exit 0
 fi
 
-# Clear the screen and start installation
+# Estrazione ID (Colonna 2)
+app_id=$(echo "$selected_line" | awk '{print $2}')
+
+# 5. Installation
+# Usiamo il terminale corrente per mostrare il progresso (o uno nuovo se lanciato da sway)
 clear
-echo "Starting installation of: $selected_app"
-echo "----------------------------------------"
-flatpak install "$selected_app"
+echo "Inizializzazione installazione atomica per: $app_id"
+echo "Remote: $TARGET_REMOTE"
+echo "-----------------------------------------------------"
+
+# Comando di installazione esplicito
+flatpak install "$TARGET_REMOTE" "$app_id" -y
+
+# Check finale
+if [ $? -eq 0 ]; then
+  notify-send -u normal -i "software-installed" "Success" "$app_id installato correttamente."
+else
+  notify-send -u critical -i "dialog-error" "Failed" "Errore durante l'installazione."
+fi

@@ -1,27 +1,17 @@
 #!/bin/bash
 
-# Omablue Theme List - The Secureblue Architect Tool
-# Obiettivo: Elencare i temi disponibili per il selettore FZF
+#  Absolute path\
+THEMES_DIR=$(readlink -f "$HOME/.local/share/omablue/themes")
 
-THEMES_DIR="$HOME/.local/share/omablue/themes"
-
-# Verifica se la directory esiste per evitare errori silenziosi
 if [[ ! -d "$THEMES_DIR" ]]; then
-    echo "Directory temi non trovata: $THEMES_DIR" >&2
-    exit 1
+  echo "Can't find the directory": $THEMES_DIR" >&2
+  exit 1
 fi
 
-# Scansione della directory
-# 1. Trova cartelle o link simbolici (per supportare temi installati via git)
-# 2. Rimuove il percorso assoluto per tenere solo il nome della cartella
-# 3. Formatta il nome: sostituisce i trattini con spazi e capitalizza le iniziali
-find "$THEMES_DIR" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) | sort | while read -r path; do
-  # Estrae il nome della cartella (es. catppuccin-mocha)
+find -L "$THEMES_DIR" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print0 | sort -z | while IFS= read -r -d '' path; do
   basename_path=$(basename "$path")
-  
-  # Trasforma catppuccin-mocha -> Catppuccin Mocha
-  # La regex: capitalizza dopo l'inizio riga (^) o dopo un trattino (-)
-  formatted_name=$(echo "$basename_path" | sed -E 's/(^|-)([a-z])/\1\u\2/g; s/-/ /g')
-  
+
+   formatted_name=$(echo "$basename_path" | sed -E 's/(^|-)([a-z])/\1\u\2/g; s/-/ /g')
+
   echo "$formatted_name"
 done

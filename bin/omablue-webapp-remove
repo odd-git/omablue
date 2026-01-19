@@ -1,63 +1,63 @@
 #!/bin/bash
-# Forza il path corretto per trovare gum
+# Force the correct path to find gum
 export PATH="$HOME/.local/share/omablue/bin:$PATH"
 
 ICON_DIR="$HOME/.local/share/applications/icons"
 DESKTOP_DIR="$HOME/.local/share/applications"
 
-# Array per memorizzare le app trovate
+# Array to store found apps
 WEB_APPS=()
 
 if [ "$#" -eq 0 ]; then
-  # 1. Scansione delle Web App installate
-  # Cerchiamo i file .desktop che richiamano lo script di lancio omarchy
+  # 1. Scan for installed Web Apps
+  # Look for .desktop files that call the omablue launch script
   while IFS= read -r -d '' file; do
     if grep -q 'omablue-launch-webapp' "$file"; then
       WEB_APPS+=("$(basename "${file%.desktop}")")
     fi
   done < <(find "$DESKTOP_DIR" -maxdepth 1 -name '*.desktop' -print0)
 
-  # 2. Controllo se ci sono app da rimuovere
+  # 2. Check if there are apps to remove
   if ((${#WEB_APPS[@]} == 0)); then
-    echo "Nessuna web app trovata da rimuovere."
-    notify-send "Omarchy" "Nessuna web app trovata."
+    echo "No web apps found to remove."
+    notify-send "Omarchy" "No web apps found."
     exit 0
   fi
 
-  # 3. Selezione tramite Gum
-  # Sort degli elementi per ordine alfabetico
+  # 3. Selection via Gum
+  # Sort items alphabetically
   IFS=$'\n' SORTED_APPS=($(sort <<<"${WEB_APPS[*]}"))
   unset IFS
 
-  SELECTED=$(gum choose --no-limit --header "Seleziona le app da rimuovere (Spazio per selezionare, Invio per confermare)" --selected-prefix="[X] " --unselected-prefix="[ ] " "${SORTED_APPS[@]}")
+  SELECTED=$(gum choose --no-limit --header "Select apps to remove (Space to select, Enter to confirm)" --selected-prefix="[X] " --unselected-prefix="[ ] " "${SORTED_APPS[@]}")
 
-  # Se l'utente preme ESC o non seleziona nulla
+  # If the user presses ESC or selects nothing
   if [[ -z "$SELECTED" ]]; then
-    echo "Operazione annullata."
+    echo "Operation cancelled."
     exit 0
   fi
 
-  # Convertiamo la selezione in un array (gestendo i nomi con spazi)
+  # Convert the selection into an array (handling names with spaces)
   mapfile -t APP_NAMES <<<"$SELECTED"
 else
-  # Se i nomi sono passati come argomenti
+  # If names are passed as arguments
   APP_NAMES=("$@")
 fi
 
-# 4. Processo di rimozione
+# 4. Removal process
 for APP_NAME in "${APP_NAMES[@]}"; do
-  # Rimuoviamo il file .desktop
+  # Remove the .desktop file
   if [[ -f "$DESKTOP_DIR/$APP_NAME.desktop" ]]; then
     rm -f "$DESKTOP_DIR/$APP_NAME.desktop"
-    echo "Rimosso file desktop: $APP_NAME"
+    echo "Removed desktop file: $APP_NAME"
   fi
 
-  # Rimuoviamo l'icona (proviamo sia .png che altre estensioni comuni)
+  # Remove the icon (trying both .png and other common extensions)
   rm -f "$ICON_DIR/$APP_NAME.png"
   rm -f "$ICON_DIR/$APP_NAME.jpg"
 
-  notify-send "Omarchy" "Rimosso: $APP_NAME"
-  echo "Rimozione di $APP_NAME completata."
+  notify-send "Omarchy" "Removed: $APP_NAME"
+  echo "Removal of $APP_NAME completed."
 done
 
-echo -e "\n\e[32mOperazione conclusa.\e[0m"
+echo -e "\n\e[32mOperation completed.\e[0m"

@@ -1,0 +1,65 @@
+#!/usr/bin/env bash
+
+# --- Secureblue Sway Architect: Bluetooth Manager ---
+# Keyboard-driven management via bluetoothctl and rofi
+
+# Function: Send consistent notifications
+notify_bt() {
+  notify-send -a "Bluetooth" -i bluetooth-symbolic "$1" -h string:x-dunst-stack-tag:bt
+}
+
+# 1. Main Menu with Nerd Font Icons
+OPTIONS="󰂯 Connect to Paired\n󰒄 Pair New Device\n󰂰 Toggle Bluetooth\n󰂱 Disconnect All"
+CHOSEN=$(echo -e "$OPTIONS" | rofi -dmenu -p "Bluetooth" -i -width 25)
+
+case "$CHOSEN" in
+*"Connect to Paired")
+  DEVICE_LIST=$(bluetoothctl devices Paired | awk '{split($0,a," "); $1=$2=""; print $0 " |" a[2]}')
+
+  if [ -z "$DEVICE_LIST" ]; then
+    notify_bt "No paired devices found"
+    exit 0
+  fi
+
+  SEL_DEVICE=$(echo -e "$DEVICE_LIST" | rofi -dmenu -p "Connect to" -i)
+  [ -z "$SEL_DEVICE" ] && exit 0
+
+  MAC=$(echo "$SEL_DEVICE" | cut -d'|' -f2)
+  NAME=$(echo "$SEL_DEVICE" | cut -d'|' -f1 | xargs)
+
+  notify_bt "Connecting to $NAME..."
+  bluetoothctl connect "$MAC" && notify_bt "Connected: $NAME" || notify_bt "Failed to connect"
+  ;;
+
+*"Pair New Device")
+  notify_bt "Scanning for 15s..."
+  timeout 15s bluetoothctl scan on >/dev/null &
+  sleep 2
+
+  NEW_DEVICES=$(bluetoothctl devices | awk '{split($0,a," "); $1=$2=""; print $0 " |" a[2]}')
+  SEL_NEW=$(echo -e "$NEW_DEVICES" | rofi -dmenu -p "Pair with" -i)
+
+  [ -z "$SEL_NEW" ] && exit 0
+  MAC_NEW=$(echo "$SEL_NEW" | cut -d'|' -f2)
+
+  notify_bt "Pairing..."
+  bluetoothctl pair "$MAC_NEW" && bluetoothctl trust "$MAC_NEW" && bluetoothctl connect "$MAC_NEW"
+  ;;
+
+*"Toggle Bluetooth")
+  STATE=$(bluetoothctl show | grep "Powered:" | awk '{print $2}')
+  if [ "$STATE" = "yes" ]; then
+    bluetoothctl power off && notify_bt "Bluetooth: OFF"
+  else
+    bluetoothctl power on && notify_bt "Bluetooth: ON"
+  fi
+  ;;
+
+*"Disconnect All")
+  CONNECTED=$(bluetoothctl devices Connected | awk '{print $2}')
+  for dev in $CONNECTED; do
+    bluetoothctl disconnect "$dev"
+  done
+  notify_bt "All devices disconnected"
+  ;;
+esac

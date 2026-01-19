@@ -368,13 +368,7 @@ else
 fi
 
 # --- 2. Rilevamento Browser ---
-declare -A BROWSER_BINARIES=(
-    [Brave]=brave 
-    [Google Chrome]=google-chrome-stable 
-    [Chromium]=chromium
-    [Microsoft Edge]=microsoft-edge-stable 
-    [Vivaldi]=vivaldi 
-    [Helium]=helium-browser
+declare -A BROWSER_BINARIES=( 
     [Trivalent]=trivalent
 )
 
@@ -394,13 +388,7 @@ BROWSER_CHOICE=$(gum choose --header "Quale browser vuoi usare?" "${BROWSERS[@]}
 BROWSER_BIN="${BROWSER_BINARIES[$BROWSER_CHOICE]}"
 
 # --- 3. Gestione Profili Avanzata ---
-declare -A BROWSER_CONFIG_DIRS=(
-    [Chromium]="$HOME/.config/chromium"
-    [Google Chrome]="$HOME/.config/google-chrome"
-    [Brave]="$HOME/.config/BraveSoftware/Brave-Browser"
-    [Microsoft Edge]="$HOME/.config/microsoft-edge"
-    [Vivaldi]="$HOME/.config/vivaldi"
-    [Helium]="$HOME/.config/net.imput.helium"
+declare -A BROWSER_CONFIG_DIRS=( 
     [Trivalent]="$HOME/.config/trivalent"
 )
 

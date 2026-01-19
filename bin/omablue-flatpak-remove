@@ -1,52 +1,61 @@
 #!/bin/bash
 
-# Force path for gum if needed (consistent with your other scripts)
-export PATH="$HOME/.local/share/omablue/bin:$PATH"
+# --- Secureblue Header ---
+# Ensure the path is correctly set for the atomic environment
+PATH="/usr/bin:/usr/local/bin:$PATH"
 
-# Check if gum is installed
-if ! command -v gum &>/dev/null; then
-  echo "Error: gum is not installed."
+# 1. Dependency Check
+# Verify if fzf is present in the system
+if ! command -v fzf &>/dev/null; then
+  notify-send -u critical "Error" "fzf is not installed. Please install it via brew or rpm-ostree."
   exit 1
 fi
 
-# 1. Fetch installed Flatpaks
-# We format it as "Name | ApplicationID" for the picker
-MAP_LIST=$(flatpak list --columns=name,application | sed 's/\t/ | /')
+# Send notification using Dunst to signal process start
+notify-send -u low -i "app-remove" "Flatpak Manager" "Generating list of installed applications..."
 
-if [[ -z "$MAP_LIST" ]]; then
-  echo "Nessuna app Flatpak trovata."
-  notify-send "Omarchy" "Nessuna app Flatpak installata."
+# 2. Fetching Local Data
+# Use --app to list only installed software, excluding system runtimes
+# Format columns to match the picker script style
+formatted_list=$(flatpak list --app --columns=name,application,version |
+  awk -F'\t' 'BEGIN {print "NAME\tID\tVERSION"} {printf "%-30s\t%-40s\t%-15s\n", $1, $2, $3}')
+
+# 3. Interactive Selection (Omarchy Style)
+# Use fzf for a keyboard-driven selection experience
+selected_line=$(echo "$formatted_list" | fzf \
+  --header-lines=1 \
+  --prompt="Remove Application > " \
+  --layout=reverse \
+  --height=60% \
+  --border \
+  --ansi)
+
+# Exit if the user cancels the selection
+if [ -z "$selected_line" ]; then
   exit 0
 fi
 
-# 2. Selection via Gum
-# --no-limit allows multiple selection
-SELECTED=$(echo "$MAP_LIST" | gum choose \
-  --no-limit \
-  --header "Seleziona le app Flatpak da rimuovere (Spazio per selezionare, Invio per confermare)" \
-  --selected-prefix="[X] " \
-  --unselected-prefix="[ ] " \
-  --cursor-prefix="> ")
+# Extract the Application ID (the second column)
+app_id=$(echo "$selected_line" | awk '{print $2}')
 
-# Exit if nothing was selected
-if [[ -z "$SELECTED" ]]; then
-  echo "Operazione annullata."
-  exit 0
+# 4. Removal Process
+# Clear terminal and start the atomic removal
+clear
+echo "Starting atomic removal for: $app_id"
+echo "-----------------------------------------------------"
+
+# Perform explicit uninstallation
+flatpak uninstall "$app_id" -y
+
+# 5. Post-Removal Cleanup
+# Remove unused runtimes and data to keep the atomic system lean
+echo ""
+echo "Cleaning up unused dependencies..."
+flatpak uninstall --unused -y
+
+# Final Check and Notification
+if [ $? -eq 0 ]; then
+  notify-send -u normal -i "user-trash" "Success" "$app_id removed and system cleaned."
+else
+  notify-send -u critical -i "dialog-error" "Failed" "Could not remove $app_id."
 fi
-
-# 3. Process Removal
-# Extract only the Application ID (the part after the '|')
-APP_IDS=$(echo "$SELECTED" | awk -F ' | ' '{print $NF}')
-
-for ID in $APP_IDS; do
-  echo -e "\nRimoziome di: \e[33m$ID\e[0m..."
-
-  # -y for non-interactive removal since we already chose in gum
-  if flatpak uninstall -y "$ID"; then
-    notify-send "Omarchy" "Rimosso: $ID"
-  else
-    echo "Errore durante la rimozione di $ID"
-  fi
-done
-
-echo -e "\n\e[32mOperazione conclusa.\e[0m"

@@ -3,70 +3,55 @@
 # Omablue: The Secureblue Theme Engine
 # Architecture: Atomic / Sway / Ghostty / Dunst
 
+# Check for required theme argument; exit if missing or set to "CNCLD"
 if [[ -z $1 && $1 != "CNCLD" ]]; then
   echo "Usage: omablue-theme-set <theme-name>"
   exit 1
 fi
 
-THEMES_DIR="$HOME/.config/omablue/themes"
+# Define paths for theme storage and the active symlink
+THEMES_DIR="$HOME/.local/share/omablue/themes"
 CURRENT_THEME_LINK="$HOME/.config/ombalue/current/theme"
 
-# Normalizzazione nome tema
+# Normalize theme name: strip tags, convert to lowercase, and replace spaces with hyphens
 THEME_NAME=$(echo "$1" | sed -E 's/<[^>]+>//g' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
 THEME_PATH="$THEMES_DIR/$THEME_NAME"
 
+# Verify that the requested theme directory exists
 if [[ ! -d "$THEME_PATH" ]]; then
-  echo "❌ Theme '$THEME_NAME' non trovato in $THEMES_DIR"
+  echo "❌ Theme '$THEME_NAME' not found in $THEMES_DIR"
   exit 1
 fi
 
-# 1. Update Symlink del Tema (Atomic Workflow)
+# --- 1. Update Theme Symlink (Atomic Workflow) ---
+# Update the master symlink to point to the new theme directory
 ln -nsf "$THEME_PATH" "$CURRENT_THEME_LINK"
 
-# 2. Gestione Ghostty (Masterword focus)
-# Creiamo un link per il file colori di Ghostty
+# --- 2. Ghostty Terminal Configuration ---
+# Link the theme's Ghostty config to the active terminal profile
 if [[ -f "$THEME_PATH/ghostty.conf" ]]; then
   ln -nsf "$THEME_PATH/ghostty.conf" "$HOME/.config/ghostty/theme_current"
-  # Invia segnale a Ghostty per ricaricare la config senza chiudere il terminale
+  # Signal Ghostty to live-reload configuration without closing active windows
   pkill -USR1 ghostty
 fi
 
-# 3. Gestione Dunst (Strategia Atomic Fusion)
-# Definiamo i percorsi
+# --- 3. Dunst Notification Management (Atomic Fusion Strategy) ---
+# Define Dunst configuration paths
 DUNST_BASE="$HOME/.config/dunst/dunstrc.base"
 DUNST_TARGET="$HOME/.config/dunst/dunstrc"
 THEME_DUNST="$THEME_PATH/dunst.conf"
 
 if [[ -f "$DUNST_BASE" && -f "$THEME_DUNST" ]]; then
-  echo "⚙️  Rigenerazione configurazione Dunst..."
+  echo "⚙️  Regenerating Dunst configuration..."
 
-  # FUSIONE: Scrive la base + il tema nel file target
+  # FUSION: Concatenate the global base config with the theme-specific overrides
   cat "$DUNST_BASE" "$THEME_DUNST" >"$DUNST_TARGET"
 
-  # Riavvio pulito
-  # Uccidiamo dunst se è attivo, poi inviamo una notifica per riattivarlo via DBus
+  # Clean Restart: Terminate Dunst and allow DBus to restart it with new config
   killall dunst 2>/dev/null
 
-  # Piccola pausa per assicurare che il processo sia morto
+  # Brief pause to ensure the process has exited
   sleep 0.5
 
-  notify-send -h string:x-dunst-stack-tag:system_hud "Omablue" "Tema Dunst applicato: $THEME_NAME"
-else
-  echo "⚠️  Attenzione: Impossibile generare dunstrc."
-  echo "   Verifica che esistano: $DUNST_BASE e $THEME_DUNST"
-fi
-
-# 4. Sway Reload (Sostituisce hyprctl)
-swaymsg reload
-
-# 5. Sfondo (Swaybg via Omarchy script adattato)
-omarchy-theme-bg-next
-
-# 6. Altri componenti Omarchy (GNOME, Browser, Obsidian)
-# Questi verranno rinominati gradualmente in omablue-*
-omarchy-theme-set-gnome
-omarchy-theme-set-browser
-omarchy-theme-set-obsidian
-
-# 7. Feedback Visivo (Omablue HUD)
-notify-send -h string:x-dunst-stack-tag:system_hud "Tema Applicato" "Ambiente: Omablue\nTema: $THEME_NAME" -i color-management
+  # Send notification to verify the new notification style is active
+  notify-send -h string:x-dunst-stack-tag:
