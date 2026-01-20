@@ -56,8 +56,7 @@ Installation
 
 Clone the repository:
 
-git clone [https://github.com/your-username/omablue.git](https://github.com/your-username/omablue.git)
-
+git clone this repo
 
 Deploy the assets:
 cd omablue/
