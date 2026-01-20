@@ -1,0 +1,77 @@
+#!/bin/bash
+
+# --- Secureblue Sway Architect: Keybinding Viewer ---
+# Description: Parses Sway config files and displays them in Rofi
+# Integrated with Omarchy philosophy and Secureblue Sericea
+
+# Define paths to Sway binding files
+BINDINGS_FILE="$HOME/.config/sway/bindings"
+USER_BINDINGS_FILE="$HOME/.config/sway/user-bindings"
+
+# Function to extract and format bindings from Sway files
+extract_sway_bindings() {
+  # Combine both files, ignore comments and empty lines, and look for bindsym
+  grep -h "^[[:space:]]*bindsym" "$BINDINGS_FILE" "$USER_BINDINGS_FILE" 2>/dev/null |
+    sed -r \
+      -e 's/^[[:space:]]*bindsym[[:space:]]+//' \
+      -e 's/--to-code//' \
+      -e 's/--locked//' \
+      -e 's/--no-warn//' \
+      -e 's/\$mod/SUPER/g' \
+      -e 's/exec[[:space:]]+//' \
+      -e 's,~/.local/share/omarchy/bin/,,g' \
+      -e 's,~/.local/share/omablue/bin/,,g'
+}
+
+# Parse and format for Rofi
+parse_bindings() {
+  awk '{
+        # Sway bindings are usually: KEY combination COMMAND
+        # We split by the first space to separate keys from the action
+        match($0, /[[:space:]]/);
+        key_combo = substr($0, 1, RSTART-1);
+        action = substr($0, RSTART+1);
+
+        # Clean up the action string
+        gsub(/^[ \t]+|[ \t]+$/, "", action);
+        
+        # Escape XML for Pango markup if needed (Rofi supports this)
+        gsub(/&/, "&amp;", action);
+        gsub(/</, "&lt;", action);
+        gsub(/>/, "&gt;", action);
+
+        if (action != "") {
+            printf "%-30s → %s\n", key_combo, action;
+        }
+    }'
+}
+
+# Priority logic similar to the original script
+prioritize_entries() {
+  awk -F ' → ' '
+    {
+        line = $0
+        prio = 50
+        if (line ~ /terminal|foot/) prio = 0
+        if (line ~ /browser|firefox/) prio = 1
+        if (line ~ /nautilus|thunar|pcmanfm/) prio = 2
+        if (line ~ /menu|rofi|wofi/) prio = 4
+        if (line ~ /screenshot|grim|slurp/) prio = 15
+        if (line ~ /scratchpad/) prio = 25
+        
+        printf "%d\t%s\n", prio, line
+    }' | sort -k1,1n -k2,2 | cut -f2-
+}
+
+# Main Execution
+echo "Gathering Sway Keybindings..."
+
+extract_sway_bindings |
+  sort -u |
+  parse_bindings |
+  prioritize_entries |
+  rofi -dmenu \
+    -i \
+    -p "Keybindings" \
+    -config ~/.config/rofi/config.rasi \
+    -theme-str 'window { width: 70%; }'
