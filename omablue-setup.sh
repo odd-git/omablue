@@ -1,8 +1,8 @@
-#!/bin/bash
+##!/bin/bash
 
 # --- Secureblue Sway Architect: Omablue Setup Script ---
 # Description: Installs omablue environment on secureblue Sericea
-# Principles: Atomic-safe, Keyboard-driven, Brew-reliant
+# Principles: Atomic-safe, Keyboard-driven, Brew-reliant, Fully Automated
 
 REPO_URL="https://github.com/odd-git/omablue.git"
 TEMP_DIR=$(mktemp -d)
@@ -20,6 +20,27 @@ send_notification() {
   fi
 }
 
+# Function to safely add PATH to shell config
+configure_shell_path() {
+  local shell_rc="$1"
+  local bin_path="$OMABLUE_SHARE/bin"
+
+  if [ -f "$shell_rc" ]; then
+    # Check if the path is already mentioned to avoid duplicates (Idempotency)
+    if ! grep -q "$bin_path" "$shell_rc"; then
+      echo "Configuring PATH in $shell_rc..."
+      {
+        echo ""
+        echo "# --- Omablue Environment ---"
+        echo "export PATH=\"$bin_path:\$PATH\""
+      } >>"$shell_rc"
+      echo "Updated $shell_rc."
+    else
+      echo "Path already present in $shell_rc. Skipping."
+    fi
+  fi
+}
+
 echo "Starting Omablue installation..."
 
 # 1. Create necessary directory structure
@@ -34,7 +55,6 @@ else
 fi
 
 # 3. Handle Backups of existing configs
-# We only backup directories that omablue intends to overwrite
 echo "Backing up existing configurations..."
 mkdir -p "$HOME/.config_backup_$BACKUP_DATE"
 
@@ -60,7 +80,6 @@ fi
 cp -r "$TEMP_DIR/config"/* "$HOME/.config/"
 
 # 5. Install dependencies via Homebrew
-# secureblue users are encouraged to use brew for CLI tools
 echo "Installing gum via Homebrew..."
 if command -v brew &>/dev/null; then
   brew install gum
@@ -70,10 +89,15 @@ else
   exit 1
 fi
 
-# 6. Final Notification
-send_notification "success" "Omablue setup complete. Restart Sway to apply changes."
+# 6. Automate Shell Path Configuration
+echo "Configuring shell environment..."
+configure_shell_path "$HOME/.bashrc"
+configure_shell_path "$HOME/.zshrc"
+
+# 7. Final Notification
+send_notification "success" "Omablue setup complete. Please restart your shell or log out/in."
 
 # Cleanup
 rm -rf "$TEMP_DIR"
 
-echo "Setup finished. Please add $OMABLUE_SHARE/bin to your PATH in ~/.bashrc or ~/.zshrc if needed."
+echo "Setup finished successfully."
