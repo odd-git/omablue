@@ -206,13 +206,8 @@ else
 fi
 
 # --- 2. Rilevamento Browser ---
-declare -A BROWSER_BINARIES=(
-    [Brave]=brave 
-    [Google Chrome]=google-chrome-stable 
+declare -A BROWSER_BINARIES=( 
     [Chromium]=chromium
-    [Microsoft Edge]=microsoft-edge-stable 
-    [Vivaldi]=vivaldi 
-    [Helium]=helium-browser
     [Trivalent]=trivalent
 )
 
@@ -233,12 +228,7 @@ BROWSER_BIN="${BROWSER_BINARIES[$BROWSER_CHOICE]}"
 
 # --- 3. Gestione Profili Avanzata ---
 declare -A BROWSER_CONFIG_DIRS=(
-    [Chromium]="$HOME/.config/chromium"
-    [Google Chrome]="$HOME/.config/google-chrome"
-    [Brave]="$HOME/.config/BraveSoftware/Brave-Browser"
-    [Microsoft Edge]="$HOME/.config/microsoft-edge"
-    [Vivaldi]="$HOME/.config/vivaldi"
-    [Helium]="$HOME/.config/net.imput.helium"
+    [Chromium]="$HOME/.config/chromium" 
     [Trivalent]="$HOME/.config/trivalent"
 )
 
@@ -320,8 +310,8 @@ chmod +x "$DESKTOP_FILE"
 
 # --- 6. Feedback ---
 if [[ $INTERACTIVE_MODE == true ]]; then
-    notify-send "Omablue" "WebApp installata: $APP_NAME ($BROWSER_CHOICE)"
-    echo -e "\n\e[32m✔ Installazione completata!\e[0m"
+    notify-send "Omablue" "WebApp installed: $APP_NAME ($BROWSER_CHOICE)"
+    echo -e "\n\e[32m✔ Installation completed!\e[0m"
     sleep 1
 fi#!/bin/bash
 # 1. Forza il titolo della finestra per le regole di Sway (Floating Center)
@@ -333,13 +323,13 @@ OMABIN="$HOME/.local/share/omablue/bin"
 
 set -euo pipefail
 
-# --- Dipendenze ---
+# --- Depencencies ---
 if ! command -v gum &> /dev/null; then
-    notify-send "Errore" "Installa 'gum' per usare questo script."
+    notify-send "Error" "Install 'gum' to use this script."
     exit 1
 fi
 if ! command -v jq &> /dev/null; then
-    notify-send "Errore" "Installa 'jq' per rilevare i profili del browser."
+    notify-send "Error" "Install 'jq' to find browser profile."
     exit 1
 fi
 
@@ -350,13 +340,13 @@ mkdir -p "$HOME/.local/share/applications/icons"
 if [ "$#" -lt 3 ]; then
     echo -e "\e[34m󰖟 Omablue WebApp Installer\e[0m\n"
 
-    APP_NAME=$(gum input --prompt "Nome App > " --placeholder "Es: WhatsApp")
+    APP_NAME=$(gum input --prompt "App Name > " --placeholder "Es: WhatsApp")
     [[ -z "$APP_NAME" ]] && exit 0
 
     APP_URL=$(gum input --prompt "URL > " --placeholder "https://web.whatsapp.com")
     [[ -z "$APP_URL" ]] && exit 0
 
-    ICON_REF=$(gum input --prompt "URL Icona > " --placeholder "https://... (o path locale)")
+    ICON_REF=$(gum input --prompt "URL Icon > " --placeholder "https://... (o local path)")
     [[ -z "$ICON_REF" ]] && exit 0
 
     INTERACTIVE_MODE=true
@@ -367,7 +357,7 @@ else
     INTERACTIVE_MODE=false
 fi
 
-# --- 2. Rilevamento Browser ---
+# --- 2. Browser Scan---
 declare -A BROWSER_BINARIES=( 
     [Trivalent]=trivalent
 )
@@ -380,14 +370,14 @@ for name in "${!BROWSER_BINARIES[@]}"; do
 done
 
 if [ ${#BROWSERS[@]} -eq 0 ]; then
-    gum style --foreground 196 "Nessun browser supportato trovato."
+    gum style --foreground 196 "I can't find any supported browser."
     exit 1
 fi
 
-BROWSER_CHOICE=$(gum choose --header "Quale browser vuoi usare?" "${BROWSERS[@]}")
+BROWSER_CHOICE=$(gum choose --header "Which Browser?" "${BROWSERS[@]}")
 BROWSER_BIN="${BROWSER_BINARIES[$BROWSER_CHOICE]}"
 
-# --- 3. Gestione Profili Avanzata ---
+# --- 3. Advanced profile management ---
 declare -A BROWSER_CONFIG_DIRS=( 
     [Trivalent]="$HOME/.config/trivalent"
 )
@@ -396,12 +386,11 @@ PROFILE_DIR="${BROWSER_CONFIG_DIRS[$BROWSER_CHOICE]:-$HOME/.config/$BROWSER_CHOI
 APP_PROFILE_FOLDER="Default" # Fallback
 
 if [ -f "$PROFILE_DIR/Local State" ]; then
-    # Metodo JSON (Chromium standard) - Richiede jq
+    # JSON (Chromium standard) - jq needed
     declare -A PROFILE_MAP
     PROFILES=()
     
-    # Leggiamo i nomi dei profili (es. "Personale", "Lavoro") e le cartelle (es. "Profile 1")
-    while IFS='|' read -r folder name; do
+        while IFS='|' read -r folder name; do
         if [[ -n "$name" ]]; then
             PROFILES+=("$name")
             PROFILE_MAP["$name"]="$folder"
@@ -409,14 +398,14 @@ if [ -f "$PROFILE_DIR/Local State" ]; then
     done < <(jq -r '.profile.info_cache | to_entries[] | "\(.key)|\(.value.name)"' "$PROFILE_DIR/Local State" 2>/dev/null || true)
 
     if [ ${#PROFILES[@]} -gt 1 ]; then
-        CHOSEN_PROFILE=$(gum choose --header "Seleziona Profilo Browser" "${PROFILES[@]}")
+        CHOSEN_PROFILE=$(gum choose --header "Choose Browser" "${PROFILES[@]}")
         APP_PROFILE_FOLDER="${PROFILE_MAP[$CHOSEN_PROFILE]}"
     elif [ ${#PROFILES[@]} -eq 1 ]; then
         APP_PROFILE_FOLDER="${PROFILE_MAP[${PROFILES[0]}]}"
     fi
 
 elif [ -d "$PROFILE_DIR" ]; then
-    # Fallback scansione cartelle se Local State non esiste o è illeggibile
+    
     PROFILES=()
     for d in "$PROFILE_DIR"/Profile*; do
         [[ -d "$d" ]] || continue
@@ -424,31 +413,31 @@ elif [ -d "$PROFILE_DIR" ]; then
     done
     
     if [ ${#PROFILES[@]} -gt 0 ]; then
-        APP_PROFILE_FOLDER=$(gum choose --header "Seleziona Cartella Profilo" "${PROFILES[@]}")
+        APP_PROFILE_FOLDER=$(gum choose --header "Choose the profile" "${PROFILES[@]}")
     fi
 fi
 
-# --- 4. Gestione Icona ---
+# --- 4. Icon management ---
 ICON_DEST="$HOME/.local/share/applications/icons/$APP_NAME.png"
 
 if [[ $ICON_REF =~ ^https?:// ]]; then
     # Scarica icona se è un URL
     if ! curl -sL -o "$ICON_DEST" "$ICON_REF"; then
-        ICON_DEST="web-browser" # Fallback icona di sistema
+        ICON_DEST="web-browser"
     fi
 elif [[ -f "$ICON_REF" ]]; then
-    # Copia se è un file locale
+    
     cp "$ICON_REF" "$ICON_DEST"
 else
-    # Usa stringa come nome icona di sistema
+    
     ICON_DEST="$ICON_REF"
 fi
 
-# --- 5. Creazione File Desktop ---
+# --- 5. Desktop file creation---
 LAUNCHER_SCRIPT="$OMABIN/omablue-launch-webapp"
 DESKTOP_FILE="$HOME/.local/share/applications/$APP_NAME.desktop"
 
-# Pulizia: Assicuriamoci che il nome del launcher sia corretto
+
 if [[ ! -f "$LAUNCHER_SCRIPT" ]]; then
     echo "ATTENZIONE: Launcher non trovato in $LAUNCHER_SCRIPT"
 fi
@@ -470,7 +459,7 @@ chmod +x "$DESKTOP_FILE"
 
 # --- 6. Feedback ---
 if [[ $INTERACTIVE_MODE == true ]]; then
-    notify-send "Omablue" "WebApp installata: $APP_NAME ($BROWSER_CHOICE)"
-    echo -e "\n\e[32m✔ Installazione completata!\e[0m"
+    notify-send "Omablue" "WebApp installed: $APP_NAME ($BROWSER_CHOICE)"
+    echo -e "\n\e[32m✔ Installation completate!\e[0m"
     sleep 1
 fi
