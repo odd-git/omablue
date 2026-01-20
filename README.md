@@ -83,3 +83,10 @@ A significant portion of the logic in these scripts was inspired by or adapted f
 Note on Security: I am aware that the secureblue maintainers prioritize human-audited code. This project serves as a functional mockup; I invite developers to audit, refactor, and improve these scripts to reach the highest standards of the secureblue project.
 
 If you find a bug or have a feature request, please open an issue.
+
+# Preview
+
+<img width="2256" height="1504" alt="image" src="https://github.com/user-attachments/assets/98b84ff5-b8ed-490a-ae0e-9a98ccdf0061" />
+<img width="2256" height="1504" alt="image" src="https://github.com/user-attachments/assets/e49c79ca-3034-48e9-821e-9decb670035e" />
+<img width="2256" height="1504" alt="image" src="https://github.com/user-attachments/assets/870b49c2-3303-4eeb-9272-b9ef01da9877" />
+:<img width="2256" height="1504" alt="image" src="https://github.com/user-attachments/assets/98702fff-34fb-4289-ab77-db9444a9d465" />
