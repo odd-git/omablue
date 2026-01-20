@@ -1,0 +1,93 @@
+#!/usr/bin/env bash
+
+# --- Secureblue Sway Architect: Network Manager ---
+# Optimized for Fedora Atomic & Dunst integration
+
+CONFIG_DIR="$HOME/.config/sway-network"
+mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+PASS_FILE="$CONFIG_DIR/hotspot_pass"
+
+# Get the primary wifi interface
+INTERFACE=$(nmcli -t -f DEVICE,TYPE device | grep wifi | cut -d: -f1 | head -n1)
+
+toggle_wifi() {
+  STATE=$(nmcli radio wifi)
+  if [ "$STATE" = "enabled" ]; then
+    nmcli device disconnect "$INTERFACE"
+    nmcli radio wifi off
+    notify-send -a "Network" -i network-wireless-off-symbolic "WiFi" "Disabled"
+  else
+    nmcli radio wifi on
+    notify-send -a "Network" -i network-wireless-symbolic "WiFi" "Enabled"
+  fi
+}
+
+manage_hotspot() {
+  HOTSPOT_OPTIONS="湊 Toggle Hotspot\n嫡 Set/Change Password"
+  SEL=$(echo -e "$HOTSPOT_OPTIONS" | rofi -dmenu -p "Hotspot" -i -width 20)
+
+  case "$SEL" in
+  *"Toggle Hotspot")
+    IS_ACTIVE=$(nmcli -t -f CONNECTION device show "$INTERFACE" | grep "Hotspot")
+    if [ -n "$IS_ACTIVE" ]; then
+      nmcli con down Hotspot && notify-send -a "Network" "Hotspot" "Deactivated"
+    else
+      if [ ! -f "$PASS_FILE" ]; then
+        NEW_PASS=$(rofi -dmenu -p "Set Hotspot Password" -password)
+        [ -z "$NEW_PASS" ] && exit 1
+        echo "$NEW_PASS" >"$PASS_FILE"
+        chmod 600 "$PASS_FILE"
+      fi
+      HPASS=$(cat "$PASS_FILE")
+      notify-send -a "Network" "Hotspot" "Activating..."
+      nmcli device wifi hotspot ssid "$(hostname)" password "$HPASS" &&
+        notify-send -a "Network" -i folder-remote "Hotspot" "Active: $(hostname)"
+    fi
+    ;;
+  *"Set/Change Password")
+    NEW_PASS=$(rofi -dmenu -p "New Password (min 8 chars)" -password)
+    if [ ${#NEW_PASS} -ge 8 ]; then
+      echo "$NEW_PASS" >"$PASS_FILE"
+      chmod 600 "$PASS_FILE"
+      notify-send -a "Network" "Hotspot" "Password updated"
+    else
+      notify-send -u critical "Error" "Password too short"
+    fi
+    ;;
+  esac
+}
+
+# Main Menu
+MAIN_OPTIONS="湊 Connect\n蓑 Disconnect\n Toggle WiFi\n垰 Hotspot Manager"
+CHOSEN=$(echo -e "$MAIN_OPTIONS" | rofi -dmenu -p "Network" -i -width 25)
+
+case "$CHOSEN" in
+*Connect)
+  # Fetching list with bars and security status
+  WIFI_LIST=$(nmcli --terse --fields "SSID,BARS,SECURITY" device wifi list | awk -F: '$1 != "" {print $1 " | " $2 " | " $3}' | sort -u -t'|' -k1,1)
+  CHOSEN_SSID_LINE=$(echo -e "$WIFI_LIST" | rofi -dmenu -p "SSID" -i)
+  [ -z "$CHOSEN_SSID_LINE" ] && exit 0
+
+  SSID=$(echo "$CHOSEN_SSID_LINE" | cut -d'|' -f1 | xargs)
+
+  # Immediate feedback
+  notify-send -a "Network" "Connecting to $SSID..."
+
+  # Logic fix: attempt connection, if fails, ask for password
+  if ! nmcli device wifi connect "$SSID"; then
+    PASS=$(rofi -dmenu -p "Password for $SSID" -password)
+    [ -z "$PASS" ] && exit 1
+    nmcli device wifi connect "$SSID" password "$PASS"
+  fi
+  ;;
+*Disconnect)
+  nmcli device disconnect "$INTERFACE" && notify-send -a "Network" "Disconnected"
+  ;;
+*Toggle*)
+  toggle_wifi
+  ;;
+*Hotspot*)
+  manage_hotspot
+  ;;
+esac
