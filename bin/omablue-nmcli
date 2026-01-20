@@ -1,74 +1,103 @@
 #!/usr/bin/env bash
 
 # --- Secureblue Sway Architect: Network Manager ---
+# Improved version for robustness and Sway/Wayland compatibility
 
 CONFIG_DIR="$HOME/.config/sway-network"
 mkdir -p "$CONFIG_DIR"
 PASS_FILE="$CONFIG_DIR/hotspot_pass"
-INTERFACE=$(nmcli -t -f DEVICE,TYPE device | grep wifi | cut -d: -f1 | head -n1)
+
+# Get the first active wifi device
+INTERFACE=$(nmcli -t -f DEVICE,TYPE device | grep :wifi | cut -d: -f1 | head -n1)
+
+# Helper for notifications
+notify() {
+  notify-send -a "Network" -i "$1" "$2"
+}
 
 toggle_wifi() {
   STATE=$(nmcli radio wifi)
   if [ "$STATE" = "enabled" ]; then
-    nmcli device disconnect "$INTERFACE"
     nmcli radio wifi off
-    notify-send -a "Network" -i network-wireless-off-symbolic "WiFi: DISABLED"
+    notify "network-wireless-off-symbolic" "WiFi: DISABLED"
   else
     nmcli radio wifi on
-    notify-send -a "Network" -i network-wireless-symbolic "WiFi: ENABLED"
+    notify "network-wireless-symbolic" "WiFi: ENABLED"
   fi
 }
 
 manage_hotspot() {
   HOTSPOT_OPTIONS="󰖩 Toggle Hotspot\n󰒄 Set/Change Password"
-  SEL=$(echo -e "$HOTSPOT_OPTIONS" | rofi -dmenu -p "Hotspot Settings" -i -width 20)
+  SEL=$(echo -e "$HOTSPOT_OPTIONS" | rofi -dmenu -p "Hotspot Settings" -i)
 
   case "$SEL" in
   *"Toggle Hotspot")
-    IS_ACTIVE=$(nmcli -t -f CONNECTION device show "$INTERFACE" | grep "Hotspot")
+    # Check if a connection named 'Hotspot' is active
+    IS_ACTIVE=$(nmcli -t -f NAME,DEVICE connection show --active | grep "Hotspot")
+
     if [ -n "$IS_ACTIVE" ]; then
-      nmcli con down Hotspot && notify-send -a "Network" "Hotspot: DEACTIVATED"
+      nmcli con down Hotspot && notify "network-outline" "Hotspot: DEACTIVATED"
     else
-      [ ! -f "$PASS_FILE" ] && rofi -dmenu -p "No password set. Enter new:" -password >"$PASS_FILE"
+      # Create password file if missing
+      if [ ! -f "$PASS_FILE" ]; then
+        HPASS=$(rofi -dmenu -p "No password set. Enter new (min 8 chars):" -password)
+        [ ${#HPASS} -lt 8 ] && {
+          notify "dialog-error" "Password too short!"
+          return
+        }
+        echo "$HPASS" >"$PASS_FILE"
+      fi
+
       HPASS=$(cat "$PASS_FILE")
-      nmcli device wifi hotspot ssid "$(hostname)" password "$HPASS" &&
-        notify-send -a "Network" -i folder-remote "Hotspot: ACTIVATED (SSID: $(hostname))"
+      # Ensure the Hotspot profile exists and start it
+      nmcli device wifi hotspot ssid "$(hostname)" password "$HPASS" ifname "$INTERFACE" &&
+        notify "folder-remote" "Hotspot: ACTIVATED (SSID: $(hostname))"
     fi
     ;;
   *"Set/Change Password")
-    NEW_PASS=$(rofi -dmenu -p "New Hotspot Password (min 8 chars)" -password -lines 0)
+    NEW_PASS=$(rofi -dmenu -p "New Hotspot Password" -password)
     if [ ${#NEW_PASS} -ge 8 ]; then
       echo "$NEW_PASS" >"$PASS_FILE"
-      notify-send -a "Network" "Hotspot password updated successfully"
+      notify "emblem-ok" "Hotspot password updated"
     else
-      notify-send -u critical "Error" "Password must be at least 8 characters"
+      notify "dialog-error" "Error: Min 8 characters required"
     fi
     ;;
   esac
 }
 
-# Main Menu
-MAIN_OPTIONS="󰖩 Connect\n󰖪 Disconnect\n󰀞 Toggle WiFi\n󱚹 Hotspot Manager"
-CHOSEN=$(echo -e "$MAIN_OPTIONS" | rofi -dmenu -p "Network Menu" -i -width 25)
+# --- Main Menu ---
+MAIN_OPTIONS="󰖩 Connect to WiFi\n󰖪 Disconnect\n󰀞 Toggle WiFi\n󱚹 Hotspot Manager"
+CHOSEN=$(echo -e "$MAIN_OPTIONS" | rofi -dmenu -p "Network ($INTERFACE)" -i)
 
 case "$CHOSEN" in
-*Connect)
-  WIFI_LIST=$(nmcli --terse --fields "SSID,BARS,SECURITY" device wifi list | awk -F: '$1 != "" {print $1 " | " $2 " | " $3}' | sort -u -t'|' -k1,1)
-  CHOSEN_SSID_LINE=$(echo -e "$WIFI_LIST" | rofi -dmenu -p "Select SSID" -i)
-  [ -z "$CHOSEN_SSID_LINE" ] && exit 0
-  SSID=$(echo "$CHOSEN_SSID_LINE" | cut -d'|' -f1 | xargs)
-  nmcli device wifi connect "$SSID" || {
-    PASS=$(rofi -dmenu -p "Password for $SSID" -password -lines 0)
+*"Connect"*)
+  # Rescan for networks
+  nmcli device wifi rescan
+  # Improved SSID listing: removes duplicates and empty lines
+  WIFI_LIST=$(nmcli --terse --fields "SSID,BARS,SECURITY" device wifi list | sed '/^--/d; s/\\:/|/g' | awk -F: '$1 != "" {print $1 " (" $2 " - " $3 ")"}' | sort -u)
+
+  SELECTED_SSID_FULL=$(echo -e "$WIFI_LIST" | rofi -dmenu -p "Select Network" -i)
+  [ -z "$SELECTED_SSID_FULL" ] && exit 0
+
+  # Extract SSID name (everything before the first open parenthesis)
+  SSID=$(echo "$SELECTED_SSID_FULL" | sed 's/ (.*//')
+
+  # Try to connect (if already saved)
+  if ! nmcli device wifi connect "$SSID"; then
+    # If connection fails, ask for password
+    PASS=$(rofi -dmenu -p "Password for $SSID" -password)
+    [ -z "$PASS" ] && exit 0
     nmcli device wifi connect "$SSID" password "$PASS"
-  }
+  fi
   ;;
-*Disconnect)
-  nmcli device disconnect "$INTERFACE" && notify-send -a "Network" "Disconnected"
+*"Disconnect"*)
+  nmcli device disconnect "$INTERFACE" && notify "network-offline" "Disconnected"
   ;;
-*Toggle*)
+*"Toggle"*)
   toggle_wifi
   ;;
-*Hotspot*)
+*"Hotspot"*)
   manage_hotspot
   ;;
 esac
