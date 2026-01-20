@@ -1,0 +1,1 @@
+/home/mino/.config/omarchy/current/theme/neovim.lua

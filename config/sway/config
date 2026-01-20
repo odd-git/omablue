@@ -1,0 +1,20 @@
+
+
+# omablue path 
+set $omabin ~/.local/share/omablue/bin
+include env
+include background
+include idle
+include look
+include input
+include unbindsym
+include bindings
+include windows_rules
+
+
+
+
+
+
+
+

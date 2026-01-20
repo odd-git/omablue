@@ -1,0 +1,76 @@
+/**
+ * Traduzione da Walker (GTK4) a Rofi RASI
+ * Tema ispirato a Catppuccin - Focus su semplicità e leggibilità
+ */
+
+* {
+    /* Variabili colore basate sul tuo CSS */
+    bg-col:           #1e1e2e; /* Esempio Catppuccin Base */
+    border-col:       #89b4fa; /* Esempio Catppuccin Blue (@border) */
+    selected-col:     #313244; 
+    text-col:         #cdd6f4;
+    selected-text:    #f5c2e7; /* @selected-text */
+    
+    font: "monospace 13"; /* Scalato per Rofi rispetto ai 18px GTK */
+    background-color: transparent;
+    text-color:       @text-col;
+}
+
+window {
+    /* Corrisponde a .box-wrapper */
+    background-color: rgba(30, 30, 46, 0.95); /* alpha(@base, 0.95) */
+    border:           2px;
+    border-color:     @border-col;
+    border-radius:    0px; /* Sway standard non ha radius */
+    width:            644px; /* Dalla tua property width-request */
+    padding:          20px;
+}
+
+mainbox {
+    /* Corrisponde a #Box */
+    orientation: vertical;
+    children: [ "inputbar", "listview" ];
+    spacing: 10px;
+}
+
+inputbar {
+    /* Corrisponde a .search-container */
+    background-color: @bg-col;
+    padding: 10px;
+    children: [ "entry" ];
+}
+
+entry {
+    /* Corrisponde a .input */
+    placeholder: "Search...";
+    placeholder-color: rgba(205, 214, 244, 0.5); /* opacity 0.5 */
+}
+
+listview {
+    /* Corrisponde a .scroll e .list */
+    fixed-height: false;
+    lines: 8;
+    columns: 1;
+    scrollbar: false; /* scrollbar { opacity: 0; } */
+    spacing: 5px;
+}
+
+element {
+    /* Corrisponde a .item-box */
+    padding: 14px;
+    orientation: horizontal;
+    children: [ "element-text" ];
+}
+
+element-text {
+    vertical-align: 0.5;
+}
+
+element selected {
+    /* Corrisponde a child:selected .item-box */
+    background-color: @selected-col;
+}
+
+element-text selected {
+    text-color: @selected-text;
+}

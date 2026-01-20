@@ -1,0 +1,34 @@
+# --- 1. Regola Specifica per i Popup Omablue ---
+# Usiamo il titolo che abbiamo impostato nel menu
+for_window [title="OMABLUE_POPUP"] {
+    floating enable
+    sticky enable
+    border pixel 3
+    resize set 600 400
+    move position center 
+    focus
+}
+for_window [title="omablue-screenshot"] {
+    floating enable
+    sticky enable
+    border pixel 3
+    resize set 150 150
+    move position center 
+    focus
+}
+for_window [title="OMABLUE_WIFI"] {
+    floating enable
+    resize set 600 600
+    move position center
+    border pixel 2
+    # Opzionale: rende la finestra "sticky" se vuoi che segua i workspace
+    # sticky enable 
+}
+
+
+workspace_layout default
+default_orientation horizontal
+
+for_window [class=".*" title=".*" floating=false] split toggle
+
+

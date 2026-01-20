@@ -1,0 +1,13 @@
+configuration {
+    modi: "drun";
+    sidebar-mode: true;
+    show-icons: false;
+    drun-display-format: "{name}";
+    display-drun: "󰀻 Apps";
+    display-run: " Run";
+
+    disable-history: true;
+    sort: true;
+    matching: "fuzzy";
+}
+@theme "/home/mino/.config/rofi/my_theme.rasi"

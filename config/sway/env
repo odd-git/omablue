@@ -1,0 +1,25 @@
+#Set default mod and default app 
+#Path omablue 
+exec dbus-update-activation-environment --systemd PATH
+#Main modifier SUPER
+set $mod Mod4
+
+# Home row direction keys, like vim
+set $left h
+set $down j
+set $up k
+set $right l
+
+# Your preferred terminal emulator
+set $term ghostty
+#Your file manager
+set $file thunar
+
+#Your Browser 
+set $browser trivalent
+
+#Rofi
+set $rofi_cmd rofi -show drun -modi drun,run -sidebar-mode true
+set $menu exec $rofi_cmd
+
+
