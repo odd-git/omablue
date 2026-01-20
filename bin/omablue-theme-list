@@ -1,17 +1,35 @@
 #!/bin/bash
 
-#  Absolute path\
+# --- Secureblue Sway Architect: Theme Lister ---
+# Description: Formats and lists available omablue themes
+# Integration: Works with Sway/Waybar/Dunst menus
+
+# Define the absolute path to the themes
 THEMES_DIR=$(readlink -f "$HOME/.local/share/omablue/themes")
 
+# 1. Check if the directory exists
 if [[ ! -d "$THEMES_DIR" ]]; then
-  echo "Can't find the directory": $THEMES_DIR" >&2
+  # Error message to stderr
+  echo "Error: Theme directory not found at $THEMES_DIR" >&2
+
+  # Notify the user via Dunst/Notify-send
+  notify-send -u critical -a "Omablue Architect" "Theme Error" "Directory not found: $THEMES_DIR"
   exit 1
 fi
 
+# 2. Process directories and symlinks
+# We use -print0 to safely handle potential spaces in folder names
 find -L "$THEMES_DIR" -mindepth 1 -maxdepth 1 \( -type d -o -type l \) -print0 | sort -z | while IFS= read -r -d '' path; do
+
+  # Extract the folder name
   basename_path=$(basename "$path")
 
-   formatted_name=$(echo "$basename_path" | sed -E 's/(^|-)([a-z])/\1\u\2/g; s/-/ /g')
+  # 3. Formatting Logic (Title Case)
+  # Replaces dashes with spaces and capitalizes each word
+  # Example: 'catppuccin-mocha' -> 'Catppuccin Mocha'
+  formatted_name=$(echo "$basename_path" | sed -E 's/(^|-)([a-z])/\1\u\2/g; s/-/ /g')
 
+  # Output to the terminal (or to a menu like wofi/rofi)
   echo "$formatted_name"
+
 done
