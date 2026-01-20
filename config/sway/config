@@ -9,6 +9,7 @@ include look
 include input
 include unbindsym
 include bindings
+include user-bindings
 include windows_rules
 
 

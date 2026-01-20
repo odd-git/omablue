@@ -14,12 +14,22 @@ set $right l
 set $term ghostty
 #Your file manager
 set $file thunar
-
 #Your Browser 
 set $browser trivalent
 
 #Rofi
-set $rofi_cmd rofi -show drun -modi drun,run -sidebar-mode true
+set $rofi_cmd rofi \
+    -show drun \
+    -modi drun,run,window \
+    -matching fuzzy \
+    -sort true \
+    -sorting-method fzf \
+    -drun-display-format "{name}" \
+    -drun-match-fields name,generic \
+    -no-custom \
+    -theme-str 'configuration { show-icons: false; font: "JetBrainsMono Nerd Font 11"; }' \
+    -sidebar-mode true
+
 set $menu exec $rofi_cmd
 
 

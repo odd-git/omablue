@@ -139,12 +139,14 @@ mode "resize" {
 }
 bindsym $mod+r mode "resize"
 
-#Custom Key bindings app 
-bindsym $mod+B exec trivalent 
-bindsym $mod+g exec $omabin/omablue-launch-webapp 'https://gemini.google.com/app' 'Profile 1' 'trivalent'
-bindsym $mod+y exec $omabin/omablue-launch-webapp 'https://www.youtube.com' 'Profile 1' 'trivalent'
 
-
-#Custom Key binding Utility
+#Utility Key binding 
 bindsym $mod+Escape exec $omabin/omablue-menu
-bindsym Print exec $term --title="omablue-screenshot" -e bash -c "$omabin/omablue-screenshot"
+bindsym $mod+Shift+b exec $omabin/omablue-menu-keybindings
+
+
+
+#Screenshot binding
+bindsym Print exec $omabin/omablue-screenshot
+bindsym Shift+Print exec $omabin/omablue-screenshot "Fullscreen"
+bindsym $mod+Print exec $omabin/omablue-screenshot "Select Area"

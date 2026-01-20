@@ -1,13 +1,25 @@
 configuration {
-    modi: "drun";
+    modi: "drun,run";
     sidebar-mode: true;
     show-icons: false;
     drun-display-format: "{name}";
     display-drun: "󰀻 Apps";
     display-run: " Run";
 
+     
     disable-history: true;
+    
+    /* Ottimizzazione del motore di ricerca */
     sort: true;
+    sorting-method: "fzf";       /* Algoritmo fzf applicato ai risultati statici */
     matching: "fuzzy";
+    
+    /* Filtro campi: Evita di indicizzare descrizioni inutili */
+    drun-match-fields: "name,exec,generic";
+    
+    /* Performance & Logic */
+    tokenize: true;              /* Permette ricerche multi-parola non ordinate */
+    filter: "";                  /* Avvia sempre con campo vuoto */
+    terminal: "ghostty";            /* Definisce il terminale nativo Wayland per secureblue */
 }
-@theme "/home/mino/.config/rofi/my_theme.rasi"
+@theme "~/.config/rofi/my_theme.rasi"
