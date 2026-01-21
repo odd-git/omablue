@@ -1,0 +1,48 @@
+#!/bin/bash
+# Replicates omablue-webapp-remove logic for TUI apps
+export PATH="$HOME/.local/share/omablue/bin:$PATH"
+
+ICON_DIR="$HOME/.local/share/applications/icons"
+DESKTOP_DIR="$HOME/.local/share/applications"
+
+TUI_APPS=()
+
+if [ "$#" -eq 0 ]; then
+  # 1. Scan for TUI Apps using the specific launcher
+  while IFS= read -r -d '' file; do
+    if grep -q 'omablue-launch-tui' "$file"; then
+      TUI_APPS+=("$(basename "${file%.desktop}")")
+    fi
+  done < <(find "$DESKTOP_DIR" -maxdepth 1 -name '*.desktop' -print0)
+
+  if ((${#TUI_APPS[@]} == 0)); then
+    echo "No TUI apps found."
+    notify-send "Omablue" "No TUI apps found."
+    exit 0
+  fi
+
+  # 2. Interactive Selection
+  IFS=$'\n' SORTED_APPS=($(sort <<<"${TUI_APPS[*]}"))
+  unset IFS
+
+  SELECTED=$(gum choose --no-limit --header "Select TUI apps to remove" --selected-prefix="[X] " --unselected-prefix="[ ] " "${SORTED_APPS[@]}")
+
+  if [[ -z "$SELECTED" ]]; then
+    exit 0
+  fi
+
+  mapfile -t APP_NAMES <<<"$SELECTED"
+else
+  APP_NAMES=("$@")
+fi
+
+# 3. Removal Process
+for APP_NAME in "${APP_NAMES[@]}"; do
+  rm -f "$DESKTOP_DIR/$APP_NAME.desktop"
+  rm -f "$ICON_DIR/$APP_NAME.png"
+
+  notify-send "Omablue" "Removed TUI: $APP_NAME"
+  echo "Removed $APP_NAME"
+done
+
+echo -e "\n\e[32m✔ Operation completed.\e[0m"

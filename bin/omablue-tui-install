@@ -1,0 +1,93 @@
+#!/bin/bash
+# 1. Force window title for Sway rules (Floating Center)
+echo -ne "\033]0;omablue-tui-install\007"
+
+# 2. PATH Setup for secureblue environment
+export PATH="$HOME/.local/share/omablue/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+OMABIN="$HOME/.local/share/omablue/bin"
+
+set -euo pipefail
+
+# --- Dependencies ---
+if ! command -v gum &>/dev/null; then
+  notify-send "Error" "Install 'gum' to use this script."
+  exit 1
+fi
+
+# Ensure icon directory exists
+mkdir -p "$HOME/.local/share/applications/icons"
+
+# --- 1. Input Collection ---
+if [ "$#" -lt 4 ]; then
+  echo -e "\e[34m󰆍 Omablue TUI Installer\e[0m\n"
+
+  APP_NAME=$(gum input --prompt "App Name > " --placeholder "e.g., Neovim")
+  [[ -z "$APP_NAME" ]] && exit 0
+
+  APP_EXEC=$(gum input --prompt "Command > " --placeholder "e.g., nvim")
+  [[ -z "$APP_EXEC" ]] && exit 0
+
+  WINDOW_STYLE=$(gum choose --header "Window style" float tile)
+
+  ICON_REF=$(gum input --prompt "Icon (URL, Path, or Name) > " --placeholder "https://... or /path/to/icon.png")
+  [[ -z "$ICON_REF" ]] && exit 0
+
+  INTERACTIVE_MODE=true
+else
+  APP_NAME="$1"
+  APP_EXEC="$2"
+  WINDOW_STYLE="$3"
+  ICON_REF="$4"
+  INTERACTIVE_MODE=false
+fi
+
+# --- 2. Icon Management ---
+# Logic consistent with omablue-webapp-install
+ICON_DEST="$HOME/.local/share/applications/icons/$APP_NAME.png"
+
+if [[ $ICON_REF =~ ^https?:// ]]; then
+  if ! curl -sL -o "$ICON_DEST" "$ICON_REF"; then
+    ICON_DEST="utilities-terminal"
+  fi
+elif [[ -f "$ICON_REF" ]]; then
+  cp "$ICON_REF" "$ICON_DEST"
+else
+  ICON_DEST="$ICON_REF"
+fi
+
+# --- 3. Window Behavior Logic ---
+if [[ $WINDOW_STYLE == "float" ]]; then
+  APP_CLASS="TUI.float"
+else
+  APP_CLASS="TUI.tile"
+fi
+
+# --- 4. Desktop File Creation ---
+LAUNCHER_SCRIPT="$OMABIN/omablue-launch-tui"
+DESKTOP_FILE="$HOME/.local/share/applications/$APP_NAME.desktop"
+
+if [[ ! -f "$LAUNCHER_SCRIPT" ]]; then
+  echo "WARNING: Launcher not found at $LAUNCHER_SCRIPT"
+fi
+
+cat >"$DESKTOP_FILE" <<EOF
+[Desktop Entry]
+Version=1.0
+Name=$APP_NAME
+Comment=TUI App via Omablue
+Exec=$LAUNCHER_SCRIPT '$APP_CLASS' '$APP_EXEC'
+Terminal=false
+Type=Application
+Icon=$ICON_DEST
+StartupNotify=true
+Categories=ConsoleOnly;System;
+EOF
+
+chmod +x "$DESKTOP_FILE"
+
+# --- 5. Feedback ---
+if [[ $INTERACTIVE_MODE == true ]]; then
+  notify-send "Omablue" "TUI App installed: $APP_NAME ($WINDOW_STYLE)"
+  echo -e "\n\e[32m✔ Installation completed!\e[0m"
+  sleep 1
+fi

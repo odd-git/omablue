@@ -1,0 +1,16 @@
+#!/bin/bash
+# Logic based on omablue-launch-webapp
+# Specifically optimized for Ghostty and Homebrew on secureblue
+
+APP_ID="$1"
+APP_EXEC="$2"
+
+# Robust PATH Setup: Ensures Homebrew and local binaries are found
+export PATH="$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+if [[ -n "$APP_EXEC" ]]; then
+  # We use 'sh -c' to ensure the command runs in a shell environment with our exported PATH
+  exec ghostty --class="$APP_ID" -e sh -c "$APP_EXEC"
+else
+  exit 1
+fi

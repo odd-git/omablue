@@ -1,65 +1,72 @@
 #!/bin/bash
 
-# Force path for local utilities
-export PATH="$HOME/.local/share/omablue/bin:$PATH"
+# --- Secureblue Header ---
+PATH="/usr/bin:/usr/local/bin:$PATH"
 
-# Check dependencies
+# 1. Dependency Check
 if ! command -v fzf &>/dev/null; then
-  echo "Error: fzf is not installed."
-  read -p "Press Enter to exit..."
+  notify-send -u critical "Error" "fzf is required."
   exit 1
 fi
 
-if ! command -v brew &>/dev/null; then
-  echo "Error: Homebrew is not installed."
-  read -p "Press Enter to exit..."
+# 2. Remote Auto-Detection
+# Cerca flathub, altrimenti usa il primo disponibile
+TARGET_REMOTE=$(flatpak remotes --columns=name | grep -i "flathub" | head -n 1)
+
+if [ -z "$TARGET_REMOTE" ]; then
+  TARGET_REMOTE=$(flatpak remotes --columns=name | head -n 1)
+fi
+
+if [ -z "$TARGET_REMOTE" ]; then
+  notify-send -u critical "Flatpak Error" "Nessun remote configurato."
   exit 1
 fi
 
-echo "Fetching Homebrew packages (Formulae & Casks)..."
+notify-send -u low -i "system-search" "Flatpak Browser" "Fetching list from: $TARGET_REMOTE..."
 
-# Combine formulae and casks for selection
-LIST=$( (
-  brew formulae | awk '{print $1 " [formula]"}'
-  brew casks | awk '{print $1 " [cask]"}'
-))
+# 3. Fetching & Formatting Data
+# Recuperiamo: Name, ID, Version.
+# Usiamo awk per creare una tabella visiva pulita con separatore '|'
+# %-30s = Colonna Nome larga 30 caratteri (allineata a sinistra)
+# %-40s = Colonna ID larga 40 caratteri
+# Questo assicura che l'ID sia ben visibile e allineato.
+formatted_list=$(flatpak remote-ls "$TARGET_REMOTE" --app --columns=name,application,version |
+  awk -F'\t' '{printf "%-30s | %-40s | %s\n", $1, $2, $3}')
 
-if [[ -z "$LIST" ]]; then
-  echo "Error retrieving Brew list."
-  read -p "Press Enter to exit..."
-  exit 1
-fi
-
-# Selection via fzf
-SELECTED=$(echo "$LIST" | fzf \
-  --header='Select Homebrew package to install' \
-  --prompt='Search Brew > ' \
+# 4. Interactive Selection (Omarchy Style)
+# --height 100%: Occupa tutta la finestra disponibile
+# --header: Intestazione della tabella
+# -d '|': Dice a fzf che il separatore per la ricerca è il pipe (opzionale, estetico qui)
+selected_line=$(echo "$formatted_list" | fzf \
+  --prompt="Install from $TARGET_REMOTE > " \
+  --header="NAME                           | ID                                       | VERSION" \
   --layout=reverse \
-  --height=80% \
-  --border)
+  --height=100% \
+  --border \
+  --ansi)
 
-if [[ -z "$SELECTED" ]]; then
-  echo "Operation cancelled."
-  sleep 1
+# Exit se l'utente annulla (ESC)
+if [ -z "$selected_line" ]; then
   exit 0
 fi
 
-# Extract package name
-PACKAGE=$(echo "$SELECTED" | awk '{print $1}')
+# 5. ID Extraction
+# Estraiamo la seconda colonna (l'ID) usando il separatore '|'
+# 'tr -d " "' rimuove gli spazi di padding aggiunti per l'allineamento
+app_id=$(echo "$selected_line" | awk -F '|' '{print $2}' | tr -d ' ')
 
+# 6. Installation
 clear
-echo -e "Installing: \e[33m$PACKAGE\e[0m\n"
+echo "Inizializzazione installazione atomica per: $app_id"
+echo "Remote: $TARGET_REMOTE"
+echo "-----------------------------------------------------"
 
-# Installation process with persistence logic
-if brew install "$PACKAGE"; then
-  # Send notification to Dunst
-  notify-send -a "Omablue" -i "package-x-generic" "Install Success" "Package: $PACKAGE"
-  echo -e "\n\e[32mInstallation finished successfully.\e[0m"
+# Installazione silenziosa per runtimes, ma esplicita per l'app
+flatpak install --noninteractive -y "$TARGET_REMOTE" "$app_id"
+
+# Check finale
+if [ $? -eq 0 ]; then
+  notify-send -u normal -i "software-installed" "Success" "$app_id installato correttamente."
 else
-  notify-send -u critical -a "Omablue" "Install Failed" "Error during $PACKAGE installation"
-  echo -e "\n\e[31mError occurred during installation of $PACKAGE.\e[0m"
+  notify-send -u critical -i "dialog-error" "Failed" "Errore durante l'installazione di $app_id."
 fi
-
-# Force terminal to stay open until user action
-echo -e "\n---"
-read -p "Press [Enter] to close this window..."
