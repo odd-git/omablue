@@ -1,21 +1,37 @@
-# Designed to be run by systemd timer every 30 seconds and alerts if battery is low
+#!/bin/bash
+# Omablue Battery Monitor - Secureblue Edition
+# Handles Low (20%) and Full (>=98%) notifications
 
-BATTERY_THRESHOLD=10
-NOTIFICATION_FLAG="/run/user/$UID/omarchy_battery_notified"
-BATTERY_LEVEL=$(omarchy-battery-remaining)
-BATTERY_STATE=$(upower -i $(upower -e | grep 'BAT') | grep -E "state" | awk '{print $2}')
+LOW_THRESHOLD=20
+FULL_THRESHOLD=98
+LOW_FLAG="$XDG_RUNTIME_DIR/omablue_bat_low"
+FULL_FLAG="$XDG_RUNTIME_DIR/omablue_bat_full"
 
-send_notification() {
-  notify-send -u critical "󱐋 Time to recharge!" "Battery is down to ${1}%" -i battery-caution -t 30000
-}
+# Fetch stats
+UP_INFO=$(upower -i $(upower -e | grep 'BAT'))
+LEVEL=$($HOME/.local/bin/omablue-battery-remaining)
+STATE=$(echo "$UP_INFO" | awk '/state/ {print $2}')
 
-if [[ -n "$BATTERY_LEVEL" && "$BATTERY_LEVEL" =~ ^[0-9]+$ ]]; then
-  if [[ $BATTERY_STATE == "discharging" && $BATTERY_LEVEL -le $BATTERY_THRESHOLD ]]; then
-    if [[ ! -f $NOTIFICATION_FLAG ]]; then
-      send_notification $BATTERY_LEVEL
-      touch $NOTIFICATION_FLAG
-    fi
-  else
-    rm -f $NOTIFICATION_FLAG
+# --- Logic: Low Battery (20%) ---
+if [[ "$STATE" == "discharging" && "$LEVEL" -le "$LOW_THRESHOLD" ]]; then
+  if [[ ! -f "$LOW_FLAG" ]]; then
+    notify-send -u critical -a "System" -h int:value:"$LEVEL" -i battery-caution \
+      "󱐋 Low Battery: ${LEVEL}%" "Connect charger to maintain workflow."
+    touch "$LOW_FLAG"
   fi
+else
+  # Reset low flag if charging or back above threshold
+  [[ "$LEVEL" -gt "$LOW_THRESHOLD" || "$STATE" == "charging" ]] && rm -f "$LOW_FLAG"
+fi
+
+# --- Logic: Full Charge (98%+) ---
+if [[ ("$STATE" == "fully-charged" || "$STATE" == "charging") && "$LEVEL" -ge "$FULL_THRESHOLD" ]]; then
+  if [[ ! -f "$FULL_FLAG" ]]; then
+    notify-send -u normal -a "System" -h int:value:"$LEVEL" -i battery-full-charging \
+      "󰂄 Battery Full: ${LEVEL}%" "Unplug to preserve battery health."
+    touch "$FULL_FLAG"
+  fi
+else
+  # Reset full flag once you start using the battery again
+  [[ "$STATE" == "discharging" ]] && rm -f "$FULL_FLAG"
 fi

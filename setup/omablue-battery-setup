@@ -1,0 +1,38 @@
+#!/bin/bash
+
+# Define paths for Fedora Atomic compliance
+BIN_DIR="$HOME/.local/omablue/bin"
+SYSTEMD_DIR="$HOME/.config/systemd/user"
+
+echo "󰢝 Starting Omablue Battery Setup..."
+
+# 1. Create necessary directories
+mkdir -p "$SYSTEMD_DIR"
+
+# 2. Create Systemd Service
+cat << EOF > "$SYSTEMD_DIR/omablue-battery.service"
+[Unit]
+Description=Omablue Battery Monitor Service
+
+[Service]
+Type=oneshot
+ExecStart=$BIN_DIR/omablue-battery-monitor
+EOF
+
+# 3. Create Systemd Timer
+cat << EOF > "$SYSTEMD_DIR/omablue-battery.timer"
+[Unit]
+Description=Run Omablue Battery Monitor every minute
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=1min
+
+[Install]
+WantedBy=timers.target
+EOF
+
+systemctl --user daemon-reload
+systemctl --user enable --now omablue-battery.timer
+
+echo "󰄬 Setup complete! The timer is active and will check your battery every minute."
