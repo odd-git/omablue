@@ -5,63 +5,56 @@ PATH="/usr/bin:/usr/local/bin:$PATH"
 
 # 1. Dependency Check
 if ! command -v fzf &>/dev/null; then
-  notify-send -u critical "Error" "fzf is required. Install it via brew or rpm-ostree."
+  notify-send -u critical "Error" "fzf is required."
   exit 1
 fi
 
 # 2. Remote Auto-Detection
-# Cerchiamo un remote che contenga 'flathub' nel nome.
-# Se non c'è, prendiamo il primo remote disponibile nella lista.
+
 TARGET_REMOTE=$(flatpak remotes --columns=name | grep -i "flathub" | head -n 1)
 
-# Fallback di sicurezza: se grep non trova nulla, usa il primo remote della lista
 if [ -z "$TARGET_REMOTE" ]; then
   TARGET_REMOTE=$(flatpak remotes --columns=name | head -n 1)
 fi
 
-# Se ancora vuoto, allora davvero non ci sono remote
 if [ -z "$TARGET_REMOTE" ]; then
-  notify-send -u critical "Flatpak Error" "Nessun remote configurato (nè flathub nè altri)."
+  notify-send -u critical "Flatpak Error" "Nessun remote configurato."
   exit 1
 fi
 
 notify-send -u low -i "system-search" "Flatpak Browser" "Fetching list from: $TARGET_REMOTE..."
 
-# 3. Fetching Data
-# Usiamo il remote rilevato ($TARGET_REMOTE) invece di scriverlo a mano
+# 3. Fetching & Formatting Data
 formatted_list=$(flatpak remote-ls "$TARGET_REMOTE" --app --columns=name,application,version |
-  awk -F'\t' 'BEGIN {print "NAME\tID\tVERSION"} {printf "%-30s\t%-40s\t%-15s\n", $1, $2, $3}')
+  awk -F'\t' '{printf "%-30s | %-40s | %s\n", $1, $2, $3}')
 
 # 4. Interactive Selection (Omarchy Style)
 selected_line=$(echo "$formatted_list" | fzf \
-  --header-lines=1 \
   --prompt="Install from $TARGET_REMOTE > " \
+  --header="NAME                           | ID                                       | VERSION" \
   --layout=reverse \
-  --height=60% \
+  --height=100% \
   --border \
   --ansi)
 
-# Exit se l'utente preme ESC
+# Exit (ESC)
 if [ -z "$selected_line" ]; then
   exit 0
 fi
 
-# Estrazione ID (Colonna 2)
-app_id=$(echo "$selected_line" | awk '{print $2}')
+# 5. ID Extraction
+app_id=$(echo "$selected_line" | awk -F '|' '{print $2}' | tr -d ' ')
 
-# 5. Installation
-# Usiamo il terminale corrente per mostrare il progresso (o uno nuovo se lanciato da sway)
+# 6. Installation
 clear
-echo "Inizializzazione installazione atomica per: $app_id"
+echo "Installation of  $app_id"
 echo "Remote: $TARGET_REMOTE"
 echo "-----------------------------------------------------"
 
-# Comando di installazione esplicito
-flatpak install "$TARGET_REMOTE" "$app_id" -y
+flatpak install --noninteractive -y "$TARGET_REMOTE" "$app_id"
 
-# Check finale
 if [ $? -eq 0 ]; then
-  notify-send -u normal -i "software-installed" "Success" "$app_id installato correttamente."
+  notify-send -u normal -i "software-installed" "Success" "$app_id installed properly."
 else
-  notify-send -u critical -i "dialog-error" "Failed" "Errore durante l'installazione."
+  notify-send -u critical -i "dialog-error" "Failed" " Error during installation of  $app_id."
 fi
