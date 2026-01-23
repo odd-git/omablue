@@ -9,7 +9,7 @@ export PATH="$HOMEBREW_PATHS:$LOCAL_PATHS:/usr/local/bin:/usr/bin:/bin:$PATH"
 OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 export PATH="$OMABIN:$PATH"
 
-TERMINAL="ghostty"
+TERMINAL="foot"
 TUI_CLASS="omablue-floating"
 
 BACK_TO_EXIT=false
@@ -41,21 +41,26 @@ run_tui() {
   local UNIQUE_TITLE="OMABLUE_POPUP"
 
   if [[ -x "$script_path" ]]; then
-    # Se lo script usa GUM o non usa ROFI, FORZA il terminale
+    # If script uses GUM or does NOT use ROFI, FORCE the terminal
     if grep -q "gum" "$script_path" || ! grep -q "rofi" "$script_path"; then
-      # Usiamo Ghostty con il comando corretto per restare aperto o eseguire il login shell
-      nohup $TERMINAL --class="$TUI_CLASS" --title="$UNIQUE_TITLE" -e /bin/bash -l -c "$script_path" >/dev/null 2>&1 &
+
+      # FIXED: 'foot' uses --app-id instead of --class
+      # We remove '-e' as foot accepts the command as the last arguments
+      nohup "$TERMINAL" \
+        --app-id="$TUI_CLASS" \
+        --title="$UNIQUE_TITLE" \
+        /bin/bash -l -c "$script_path" >/dev/null 2>&1 &
+
     else
-      # Se è un'app ROFI pura, lancia direttamente
+      # If it is a pure ROFI app, launch directly
       nohup "$script_path" >/dev/null 2>&1 &
     fi
-    # NON uscire immediatamente se vuoi che il menu resti sotto (opzionale)
+    # Do not exit immediately to keep menu flow if desired
     # exit 0
   else
-    notify-send -u critical "Error" "Script non trovato: $(basename "$script_path")"
+    notify-send -u critical "Error" "Script not found: $(basename "$script_path")"
   fi
 }
-
 # --- 3. Submenus ---
 
 show_install_menu() {
@@ -77,7 +82,7 @@ show_remove_menu() {
   case "${choice,,}" in
   *webapp*) run_tui "$OMABIN/omablue-webapp-remove" ;;
   *brew*) run_tui "$OMABIN/omablue-brew-remove" ;;
-  *tui*) run_tui "$OMABIN/omablue-tui-remove" ;;
+  *tui*) run_tui "$OMABIN/omarchy-tui-remove" ;;
   *flatpak*) run_tui "$OMABIN/omablue-flatpak-remove" ;;
   *) back_to ;;
   esac
