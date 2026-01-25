@@ -1,4 +1,2 @@
 #User Key bindings app 
-bindsym $mod+B exec trivalent 
-bindsym $mod+g exec $omabin/omablue-launch-webapp 'https://gemini.google.com/app' 'Profile 1' 'trivalent'
-bindsym $mod+y exec $omabin/omablue-launch-webapp 'https://www.youtube.com' 'Profile 1' 'trivalent'
+#There you can add any of your bindings by using bindsym 

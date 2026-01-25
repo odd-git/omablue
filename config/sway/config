@@ -11,6 +11,7 @@ include unbindsym
 include bindings
 include user-bindings
 include windows_rules
+include user-windows-rules
 
 
 
