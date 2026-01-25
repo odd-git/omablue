@@ -3,7 +3,7 @@ for_window [title="OMABLUE_POPUP"] {
     floating enable
     sticky enable
     border pixel 3
-    resize set 600 400
+    resize set 900 400
     move position center 
     focus
 }

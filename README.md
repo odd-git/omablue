@@ -73,6 +73,21 @@ Ensure your script directory is in your $PATH (e.g., in .bashrc or .zshrc):
 
 export PATH="$HOME/.local/share/omablue/scripts:$PATH"
 
+### Extra
+if you want to set a different sddm background:
+
+run0 mkdir -p /var/lib/sddm/themes
+run0 cp -r /usr/share/sddm/themes/* /var/lib/sddm/themes/
+rename the copied folder in from something like "fedora-sway"" in "secureblue"
+edit theme.conf by choosing the background you like to see for eg. 
+background=/usr/share/backgrounds/secureblue/secureblue-blue.png
+
+edit or create /etc/sddm.conf.d/theme-path.conf by adding the following lines
+
+[Theme]
+ThemeDir=/var/lib/sddm/themes
+Current=secureblue
+
 
 ## Contributing & Credits
 

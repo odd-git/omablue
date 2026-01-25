@@ -3,5 +3,7 @@
 #
 # Image path supports environment variables and shell expansions,
 # e.g. image=$HOME/Pictures/default.png
-image=/usr/share/backgrounds/secureblue/secureblue-blue.png
+image=~/.local/share/omablue/assets/secureblue-blue-blurred.png
 scaling=fill
+
+
