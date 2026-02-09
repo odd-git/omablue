@@ -23,9 +23,9 @@ Minimalist Aesthetics: Clean, functional UI with integrated notification handlin
 
 The project is currently in its early stages (MVP). Contributions from the community and experienced developers are highly encouraged.
 
-- [ ] Setup Script: Automated deployment via ujust integration (In Progress).
+- [x] Setup Script: Automated deployment via ujust integration (In Progress).
 
-- [ ] Themes: High-contrast and modern palettes (Catppuccin/Gruvbox).
+- [x] Themes: High-contrast and modern palettes (Catppuccin/Gruvbox).
 
 - [x] Omablue Menu: Custom launcher for system utilities.
 
@@ -38,15 +38,13 @@ The project is currently in its early stages (MVP). Contributions from the commu
 - [x] Flatpak
  integration.
 
-- [x] System Management (TUI/CLI):
+- [x] Network management by rofi
 
-- [x] Network management.
+- [x] Bluetooth control by rofi
 
-- [x] Bluetooth control.
+- [x] Audio/Pipewire manager by rofi
 
-- [x] Audio/Pipewire integration.
-
-- [x] TUI Tooling: Integrated btop, lazygit, and lazydocker overlays.
+- [x] TUI Tool installation
 
 ## Getting Started
 
@@ -58,21 +56,18 @@ Installation
 
 Clone the repository:
 
-git clone this repo
+### 1. Clone Omablue
 
-Deploy the assets:
-cd omablue/
-Move the omablue folder to your local share directory:
+```bash
+git clone https://github.com/odd-git/omablue ~/omablue
+cd ~/omablue
+```
 
-mv omablue/ ~/.local/share/
+### 2. Run Setup
 
-Move the assets inside config folder to you local .config directory
-mv config/* ~/.config
-
-Update Path:
-Ensure your script directory is in your $PATH (e.g., in .bashrc or .zshrc):
-
-export PATH="$HOME/.local/share/omablue/scripts:$PATH"
+```bash
+just setup-omablue
+```
 
 ### Extra
 
