@@ -1,347 +1,384 @@
 #!/bin/bash
+set -euo pipefail
+umask 022
 
 # --- Omablue Setup Installer ---
 # Interactive installer for Secureblue Sericea Sway configuration
-# Uses gum for beautiful terminal UI
-
-set -e
+# Deploys from the local repo (no git clone)
 
 # --- Configuration ---
-REPO_URL="https://github.com/odd-git/omablue.git"
+REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OMABLUE_SHARE="$HOME/.local/share/omablue"
 OMABLUE_CONFIG="$HOME/.config/omablue"
-BACKUP_DATE=$(date +%Y%m%d_%H%M%S)
-TEMP_DIR=""
+BACKUP_DIRS=(sway waybar rofi dunst foot swaylock Thunar gtk-3.0 nvim)
+CONFIG_DIRS=(sway waybar rofi dunst foot swaylock Thunar gtk-3.0 nvim)
+BREW_BIN=""
 
-# --- Colors (fallback if gum unavailable) ---
-RED='\033[0;31m'
-GREEN='\033[0;32m'
-YELLOW='\033[1;33m'
-BLUE='\033[0;34m'
-NC='\033[0m'
+# shellcheck source=setup/lib.sh
+source "$(dirname "${BASH_SOURCE[0]}")/lib.sh"
 
-# --- Helper Functions ---
-cleanup() {
-  [[ -n "$TEMP_DIR" && -d "$TEMP_DIR" ]] && rm -rf "$TEMP_DIR"
-}
-trap cleanup EXIT
+# --- Phase 0: Preflight Checks ---
+phase_preflight() {
+    msg "Phase 0: Preflight checks"
 
-error_exit() {
-  echo -e "${RED}Error: $1${NC}" >&2
-  notify-send -u critical "Omablue Setup" "Error: $1" 2>/dev/null || true
-  exit 1
-}
+    # Must not be root
+    if [[ "$(id -u)" -eq 0 ]]; then
+        die "Do not run this script as root. Run as your regular user."
+    fi
 
-success_msg() {
-  if command -v gum &>/dev/null; then
-    gum style --foreground 42 "$1"
-  else
-    echo -e "${GREEN}$1${NC}"
-  fi
-}
+    # HOME must be set and writable
+    if [[ -z "${HOME:-}" ]]; then
+        die "\$HOME is not set."
+    fi
+    if [[ ! -d "$HOME" || ! -w "$HOME" ]]; then
+        die "\$HOME ($HOME) is not a writable directory."
+    fi
 
-info_msg() {
-  if command -v gum &>/dev/null; then
-    gum style --foreground 33 "$1"
-  else
-    echo -e "${BLUE}$1${NC}"
-  fi
-}
-
-warn_msg() {
-  if command -v gum &>/dev/null; then
-    gum style --foreground 214 "$1"
-  else
-    echo -e "${YELLOW}$1${NC}"
-  fi
-}
-
-# --- Pre-flight Checks ---
-preflight_checks() {
-  local missing=()
-
-  # Check for git
-  if ! command -v git &>/dev/null; then
-    missing+=("git")
-  fi
-
-  # Check for homebrew (needed for gum/fzf)
-  if ! command -v brew &>/dev/null; then
-    if [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
-      eval "$(/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+    # Find brew
+    if command -v brew &>/dev/null; then
+        BREW_BIN="$(command -v brew)"
+    elif [[ -x /home/linuxbrew/.linuxbrew/bin/brew ]]; then
+        BREW_BIN="/home/linuxbrew/.linuxbrew/bin/brew"
+        # shellcheck disable=SC2046
+        # Safe: BREW_BIN is set from a known, fixed-path binary only
+        eval "$("$BREW_BIN" shellenv)"
     elif [[ -x /var/home/linuxbrew/.linuxbrew/bin/brew ]]; then
-      eval "$(/var/home/linuxbrew/.linuxbrew/bin/brew shellenv)"
+        BREW_BIN="/var/home/linuxbrew/.linuxbrew/bin/brew"
+        # shellcheck disable=SC2046
+        # Safe: BREW_BIN is set from a known, fixed-path binary only
+        eval "$("$BREW_BIN" shellenv)"
     else
-      missing+=("homebrew")
+        err "Homebrew (brew) not found."
+        msg ""
+        msg "Install Homebrew first: see https://brew.sh"
+        msg "Then run this setup again."
+        exit 1
     fi
-  fi
+    ok "brew found: $BREW_BIN"
 
-  if [[ ${#missing[@]} -gt 0 ]]; then
-    echo -e "${RED}Missing required dependencies: ${missing[*]}${NC}"
-    echo ""
-    echo "Please install the missing dependencies first:"
-    [[ " ${missing[*]} " =~ " homebrew " ]] && echo "  Homebrew: /bin/bash -c \"\$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)\""
-    [[ " ${missing[*]} " =~ " git " ]] && echo "  Git: Usually pre-installed, or install via your package manager"
-    exit 1
-  fi
-
-  # Install gum if not present (needed for interactive UI)
-  if ! command -v gum &>/dev/null; then
-    echo "Installing gum for interactive UI..."
-    brew install gum || error_exit "Failed to install gum"
-  fi
-}
-
-# --- Welcome Banner ---
-show_welcome() {
-  clear
-  gum style \
-    --border double \
-    --border-foreground 99 \
-    --padding "1 3" \
-    --margin "1" \
-    --align center \
-    "$(gum style --foreground 99 --bold 'OMABLUE')" \
-    "" \
-    "$(gum style --foreground 245 'Secureblue Sway Configuration')" \
-    "$(gum style --foreground 245 'Keyboard-driven • Atomic-safe • Beautiful')"
-
-  echo ""
-}
-
-# --- User Confirmation ---
-confirm_install() {
-  gum style --foreground 245 "This installer will:"
-  echo ""
-  echo "  • Clone the Omablue repository"
-  echo "  • Backup existing configs (sway, waybar, rofi, dunst, foot)"
-  echo "  • Deploy scripts to ~/.local/share/omablue/"
-  echo "  • Deploy configs to ~/.config/"
-  echo "  • Install dependencies (gum, fzf)"
-  echo "  • Set catppuccin as the default theme"
-  echo ""
-
-  if ! gum confirm "Proceed with installation?"; then
-    echo ""
-    gum style --foreground 214 "Installation cancelled."
-    exit 0
-  fi
-}
-
-# --- Directory Setup ---
-setup_directories() {
-  gum spin --spinner dot --title "Creating directories..." -- sleep 0.5
-
-  mkdir -p "$OMABLUE_SHARE"
-  mkdir -p "$OMABLUE_CONFIG/current"
-  mkdir -p "$HOME/.config"
-  mkdir -p "$HOME/.local/bin"
-
-  success_msg "Directories created"
-}
-
-# --- Clone Repository ---
-clone_repo() {
-  TEMP_DIR=$(mktemp -d)
-
-  gum spin --spinner dot --title "Cloning repository..." -- \
-    git clone --depth 1 "$REPO_URL" "$TEMP_DIR"
-
-  if [[ ! -d "$TEMP_DIR/bin" ]]; then
-    error_exit "Repository structure invalid - missing bin folder"
-  fi
-
-  success_msg "Repository cloned"
-}
-
-# --- Backup Existing Configs ---
-backup_configs() {
-  local backup_dir="$HOME/.config_backup_$BACKUP_DATE"
-  local backed_up=()
-
-  # List of configs we'll be replacing
-  local configs=(sway waybar rofi dunst foot ghostty)
-
-  for folder in "${configs[@]}"; do
-    if [[ -d "$HOME/.config/$folder" ]]; then
-      backed_up+=("$folder")
+    # Check git
+    if ! command -v git &>/dev/null; then
+        die "git not found in PATH."
     fi
-  done
+    ok "git found"
 
-  if [[ ${#backed_up[@]} -gt 0 ]]; then
-    info_msg "Backing up: ${backed_up[*]}"
-    mkdir -p "$backup_dir"
+    # Check swaymsg
+    if ! command -v swaymsg &>/dev/null; then
+        die "swaymsg not found. Is this a Sway-based system?"
+    fi
+    ok "swaymsg found"
 
-    for folder in "${backed_up[@]}"; do
-      gum spin --spinner dot --title "Backing up $folder..." -- \
-        cp -r "$HOME/.config/$folder" "$backup_dir/"
+    # Verify repo structure
+    if [[ ! -d "$REPO_DIR/bin" || ! -d "$REPO_DIR/config" || ! -d "$REPO_DIR/themes" ]]; then
+        die "Repo structure invalid. Expected bin/, config/, themes/ in $REPO_DIR"
+    fi
+    ok "repo structure valid: $REPO_DIR"
+
+    msg ""
+}
+
+# --- Phase 1: Backup Existing Configs ---
+phase_backup() {
+    msg "Phase 1: Backup existing configs"
+
+    local to_backup=()
+    for dir in "${BACKUP_DIRS[@]}"; do
+        if [[ -d "$HOME/.config/$dir" ]]; then
+            to_backup+=("$dir")
+        fi
     done
 
-    success_msg "Backups saved to $backup_dir"
-  else
-    info_msg "No existing configs to backup"
-  fi
+    if [[ ${#to_backup[@]} -eq 0 ]]; then
+        ok "nothing to backup"
+        msg ""
+        return
+    fi
+
+    local backup_dir
+    backup_dir="$HOME/.config-backup-omablue-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$backup_dir" || die "Failed to create backup directory: $backup_dir"
+
+    for dir in "${to_backup[@]}"; do
+        cp -r "$HOME/.config/$dir" "$backup_dir/" || die "Failed to backup $dir"
+        ok "backed up $dir"
+    done
+
+    ok "backups saved to $backup_dir"
+    msg ""
 }
 
-# --- Deploy Files ---
-deploy_files() {
-  # Deploy bin scripts
-  gum spin --spinner dot --title "Deploying scripts..." -- \
-    cp -r "$TEMP_DIR/bin" "$OMABLUE_SHARE/"
+# --- Phase 2: Deploy Files ---
+phase_deploy() {
+    msg "Phase 2: Deploy files from local repo"
 
-  # Make scripts executable
-  chmod +x "$OMABLUE_SHARE/bin/"*
+    # Create target directories
+    mkdir -p "$OMABLUE_SHARE/bin"
+    mkdir -p "$OMABLUE_SHARE/themes"
+    mkdir -p "$OMABLUE_SHARE/assets"
+    mkdir -p "$OMABLUE_CONFIG/current"
 
-  # Deploy themes
-  if [[ -d "$TEMP_DIR/themes" ]]; then
-    gum spin --spinner dot --title "Deploying themes..." -- \
-      cp -r "$TEMP_DIR/themes" "$OMABLUE_SHARE/"
-    success_msg "Themes deployed ($(ls -1 "$OMABLUE_SHARE/themes" | wc -l) themes)"
-  fi
+    # Deploy bin scripts
+    if [[ -d "$REPO_DIR/bin" ]]; then
+        deploy_dir_contents "$REPO_DIR/bin" "$OMABLUE_SHARE/bin"
+        find "$OMABLUE_SHARE/bin" -maxdepth 1 -type f -name 'omablue-*' -exec chmod +x {} +
+        ok "scripts deployed to $OMABLUE_SHARE/bin/"
+    fi
 
-  # Deploy assets
-  if [[ -d "$TEMP_DIR/assets" ]]; then
-    gum spin --spinner dot --title "Deploying assets..." -- \
-      cp -r "$TEMP_DIR/assets" "$OMABLUE_SHARE/"
-    success_msg "Assets deployed"
-  fi
+    # Deploy themes
+    if [[ -d "$REPO_DIR/themes" ]]; then
+        deploy_dir_contents "$REPO_DIR/themes" "$OMABLUE_SHARE/themes"
+        ok "themes deployed"
+    fi
 
-  # Deploy config files
-  if [[ -d "$TEMP_DIR/config" ]]; then
-    gum spin --spinner dot --title "Deploying configs..." -- \
-      cp -r "$TEMP_DIR/config"/* "$HOME/.config/"
-    success_msg "Configs deployed"
-  fi
+    # Deploy assets
+    if [[ -d "$REPO_DIR/assets" ]]; then
+        deploy_dir_contents "$REPO_DIR/assets" "$OMABLUE_SHARE/assets"
+        ok "assets deployed"
+    fi
 
-  success_msg "All files deployed"
+    # Deploy config directories
+    for dir in "${CONFIG_DIRS[@]}"; do
+        if [[ -d "$REPO_DIR/config/$dir" ]]; then
+            mkdir -p "$HOME/.config/$dir"
+
+            if [[ "$dir" == "rofi" ]]; then
+                # Rofi needs special handling: exclude .git directories
+                # from the catppuccin theme submodule
+                deploy_rofi "$REPO_DIR/config/rofi" "$HOME/.config/rofi"
+            else
+                deploy_dir_contents "$REPO_DIR/config/$dir" "$HOME/.config/$dir"
+            fi
+            ok "config/$dir deployed"
+        fi
+    done
+
+    msg ""
 }
 
-# --- Set Default Theme ---
-set_default_theme() {
-  local default_theme="catppuccin"
-  local theme_path="$OMABLUE_SHARE/themes/$default_theme"
+# --- Phase 3: Brew Install ---
+phase_brew() {
+    msg "Phase 3: Install Homebrew dependencies"
 
-  if [[ -d "$theme_path" ]]; then
-    gum spin --spinner dot --title "Setting default theme..." -- sleep 0.3
+    # Critical packages - abort if these fail
+    local critical=(gum fzf)
+    for pkg in "${critical[@]}"; do
+        if command -v "$pkg" &>/dev/null; then
+            ok "$pkg already installed"
+        else
+            msg "  Installing $pkg..."
+            if brew install "$pkg"; then
+                ok "$pkg installed"
+            else
+                die "Failed to install critical package: $pkg"
+            fi
+        fi
+    done
+
+    # Optional packages - warn and continue
+    local optional=(jq btop)
+    for pkg in "${optional[@]}"; do
+        if command -v "$pkg" &>/dev/null; then
+            ok "$pkg already installed"
+        else
+            msg "  Installing $pkg..."
+            if brew install "$pkg"; then
+                ok "$pkg installed"
+            else
+                warn "Failed to install optional package: $pkg (continuing)"
+            fi
+        fi
+    done
+
+    msg ""
+}
+
+# --- Phase 4: Shell PATH ---
+phase_path() {
+    msg "Phase 4: Configure shell PATH"
+
+    local bin_path="$OMABLUE_SHARE/bin"
+    local marker="# --- Omablue ---"
+    local path_line="export PATH=\"\$HOME/.local/share/omablue/bin:\$PATH\""
+
+    for rc_file in "$HOME/.bashrc" "$HOME/.zshrc"; do
+        if [[ ! -f "$rc_file" ]]; then
+            continue
+        fi
+        if grep -qF ".local/share/omablue/bin" "$rc_file"; then
+            ok "$(basename "$rc_file") already configured"
+        else
+            printf '\n%s\n%s\n' "$marker" "$path_line" >> "$rc_file"
+            ok "$(basename "$rc_file") updated"
+        fi
+    done
+
+    # Ensure it's in our current PATH for the rest of this script
+    export PATH="$bin_path:$PATH"
+
+    msg ""
+}
+
+# --- Phase 5: Default Theme (catppuccin) ---
+phase_theme() {
+    msg "Phase 5: Set default theme (catppuccin)"
+
+    local default_theme="catppuccin"
+    local theme_path="$OMABLUE_SHARE/themes/$default_theme"
+    local current_dir="$OMABLUE_CONFIG/current"
+
+    if [[ ! -d "$theme_path" ]]; then
+        warn "Default theme '$default_theme' not found, skipping"
+        msg ""
+        return
+    fi
+
+    mkdir -p "$current_dir"
 
     # Create theme symlink
-    ln -nsf "$theme_path" "$OMABLUE_CONFIG/current/theme"
+    ln -nsf "$theme_path" "$current_dir/theme"
 
     # Save theme name
-    echo "$default_theme" > "$OMABLUE_CONFIG/current/theme.name"
+    echo "$default_theme" > "$current_dir/theme.name"
 
-    # Deploy default foot theme as bootstrap
-    if [[ -f "$HOME/.config/foot/catppuccin-theme.ini" ]]; then
-      cp "$HOME/.config/foot/catppuccin-theme.ini" "$OMABLUE_CONFIG/current/foot-theme.ini"
-    fi
-
-    # Generate initial theme files if generator exists
+    # Generate theme files (sway, waybar, foot, rofi, dunst)
     if [[ -x "$OMABLUE_SHARE/bin/omablue-theme-generate" ]]; then
-      "$OMABLUE_SHARE/bin/omablue-theme-generate" "$theme_path" "$OMABLUE_CONFIG/current" 2>/dev/null || true
-    fi
-
-    # Symlink foot theme for foot.ini to include
-    if [[ -f "$OMABLUE_CONFIG/current/foot-theme.ini" ]]; then
-      ln -sf "$OMABLUE_CONFIG/current/foot-theme.ini" "$HOME/.config/foot/theme.ini"
-    fi
-
-    success_msg "Default theme set: $default_theme"
-  else
-    warn_msg "Default theme not found, skipping theme setup"
-  fi
-}
-
-# --- Install Dependencies ---
-install_dependencies() {
-  local deps=(gum fzf)
-
-  for dep in "${deps[@]}"; do
-    if ! command -v "$dep" &>/dev/null; then
-      gum spin --spinner dot --title "Installing $dep..." -- \
-        brew install "$dep"
-      success_msg "Installed $dep"
+        "$OMABLUE_SHARE/bin/omablue-theme-generate" "$theme_path" "$current_dir"
+        ok "theme files generated"
     else
-      info_msg "$dep already installed"
+        warn "omablue-theme-generate not found, skipping generation"
     fi
-  done
-}
 
-# --- Configure Shell PATH ---
-configure_shell_path() {
-  local bin_path="$OMABLUE_SHARE/bin"
-  local path_line="export PATH=\"$bin_path:\$PATH\""
-  local marker="# --- Omablue Environment ---"
-
-  for shell_rc in "$HOME/.bashrc" "$HOME/.zshrc"; do
-    if [[ -f "$shell_rc" ]]; then
-      if ! grep -q "$bin_path" "$shell_rc" 2>/dev/null; then
-        {
-          echo ""
-          echo "$marker"
-          echo "$path_line"
-        } >> "$shell_rc"
-        info_msg "Updated $(basename "$shell_rc")"
-      else
-        info_msg "$(basename "$shell_rc") already configured"
-      fi
+    # Symlink foot theme
+    if [[ -f "$current_dir/foot-theme.ini" ]]; then
+        mkdir -p "$HOME/.config/foot"
+        ln -sf "$current_dir/foot-theme.ini" "$HOME/.config/foot/theme.ini"
+        ok "foot theme linked"
     fi
-  done
+
+    # Symlink waybar colors
+    if [[ -f "$current_dir/waybar-colors.css" ]]; then
+        mkdir -p "$HOME/.config/waybar"
+        ln -sf "$current_dir/waybar-colors.css" "$HOME/.config/waybar/colors.css"
+        ok "waybar colors linked"
+    fi
+
+    # Symlink rofi colors
+    if [[ -f "$current_dir/rofi-colors.rasi" ]]; then
+        mkdir -p "$HOME/.config/rofi"
+        ln -sf "$current_dir/rofi-colors.rasi" "$HOME/.config/rofi/colors.rasi"
+        ok "rofi colors linked"
+    fi
+
+    # Concatenate dunstrc.base + dunst theme → dunstrc
+    local dunst_base="$HOME/.config/dunst/dunstrc.base"
+    local dunst_theme="$current_dir/dunst-theme.conf"
+    local dunst_target="$HOME/.config/dunst/dunstrc"
+    if [[ -f "$dunst_base" && -f "$dunst_theme" ]]; then
+        cat "$dunst_base" "$dunst_theme" > "$dunst_target"
+        ok "dunstrc generated"
+    fi
+
+    msg ""
 }
 
-# --- Show Summary ---
-show_summary() {
-  echo ""
-  gum style \
-    --border rounded \
-    --border-foreground 42 \
-    --padding "1 2" \
-    --margin "1 0" \
-    "$(gum style --foreground 42 --bold 'Installation Complete!')"
+# --- Phase 6: Battery Monitor (opt-in) ---
+phase_battery() {
+    msg "Phase 6: Battery monitor service (optional)"
 
-  echo ""
-  gum style --foreground 245 "Installed to:"
-  echo "  Scripts: $OMABLUE_SHARE/bin/"
-  echo "  Themes:  $OMABLUE_SHARE/themes/"
-  echo "  Configs: ~/.config/"
-  echo ""
+    local response=""
+    if command -v gum &>/dev/null; then
+        if gum confirm "Enable battery monitor service?"; then
+            response="y"
+        fi
+    else
+        read -rp "  Enable battery monitor service? [y/N] " response
+    fi
 
-  gum style --foreground 245 "Quick start:"
-  echo "  • Restart your shell or run: source ~/.bashrc"
-  echo "  • Change theme: omablue-theme-selector"
-  echo "  • Open menu: omablue-menu (or bind to Super+Space)"
-  echo ""
+    if [[ "${response,,}" != "y" ]]; then
+        ok "skipped"
+        msg ""
+        return
+    fi
 
-  gum style --foreground 99 "Reload Sway to apply changes: swaymsg reload"
+    local service_dir="$HOME/.config/systemd/user"
+    mkdir -p "$service_dir"
+
+    # Write service unit
+    cat > "$service_dir/omablue-battery.service" << EOF
+[Unit]
+Description=Omablue Battery Monitor
+
+[Service]
+Type=oneshot
+ExecStart=$HOME/.local/share/omablue/bin/omablue-battery-monitor
+EOF
+
+    # Write timer unit
+    cat > "$service_dir/omablue-battery.timer" << EOF
+[Unit]
+Description=Omablue Battery Monitor Timer
+
+[Timer]
+OnBootSec=1min
+OnUnitActiveSec=2min
+AccuracySec=30s
+
+[Install]
+WantedBy=timers.target
+EOF
+
+    systemctl --user daemon-reload
+    systemctl --user enable --now omablue-battery.timer
+    ok "battery monitor enabled"
+    msg ""
 }
 
-# --- Send Notification ---
-send_completion_notification() {
-  notify-send -u normal -a "Omablue" \
-    "Setup Complete" \
-    "Omablue has been installed. Reload Sway to apply changes." \
-    -h string:x-dunst-stack-tag:setup 2>/dev/null || true
+# --- Phase 7: Reload + Summary ---
+phase_summary() {
+    msg "Phase 7: Reload and summary"
+
+    # Reload sway (ignore failure - might not be in a sway session)
+    swaymsg reload 2>/dev/null || true
+
+    # Send notification (ignore failure)
+    notify-send -u normal -a "Omablue" \
+        "Setup Complete" \
+        "Omablue has been installed. Your Sway config is live." \
+        -h string:x-dunst-stack-tag:setup 2>/dev/null || true
+
+    msg ""
+    msg "============================================"
+    msg "  Omablue setup complete!"
+    msg "============================================"
+    msg ""
+    msg "  Installed to:"
+    msg "    Scripts: $OMABLUE_SHARE/bin/"
+    msg "    Themes:  $OMABLUE_SHARE/themes/"
+    msg "    Config:  $OMABLUE_CONFIG/"
+    msg ""
+    msg "  Key commands:"
+    msg "    omablue-menu             Main launcher (Super+Esc)"
+    msg "    omablue-theme-selector   Change theme"
+    msg ""
+    msg "  Remember to reload your shell:"
+    msg "    source ~/.bashrc"
+    msg ""
 }
 
 # --- Main ---
 main() {
-  preflight_checks
-  show_welcome
-  confirm_install
+    msg ""
+    msg "=== Omablue Setup ==="
+    msg ""
 
-  echo ""
-  gum style --foreground 99 --bold "Starting installation..."
-  echo ""
-
-  setup_directories
-  clone_repo
-  backup_configs
-  deploy_files
-  set_default_theme
-  install_dependencies
-  configure_shell_path
-
-  show_summary
-  send_completion_notification
+    phase_preflight
+    phase_backup
+    phase_deploy
+    phase_brew
+    phase_path
+    phase_theme
+    phase_battery
+    phase_summary
 }
 
 main "$@"
