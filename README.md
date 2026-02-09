@@ -1,19 +1,4 @@
----
-categories:
-  - "[[Tasks]]"
-type:
-  - "[[UI]]"
-org:
-  - "[[MyHovertime]]"
-start:
-year: 2025
-url:
-status:
-tags:
-  - Omablue
-related:
-  - "[[Omablue]]"
----
+
 # Omablue
 
 Omablue aims to be the definitive "Omarchy-inspired" experience for secureblue. It is designed for users who demand a seamless, keyboard-driven tiling window manager environment on top of an ultra-secure, hardened Fedora Atomic base.
@@ -84,19 +69,19 @@ mv omablue/ ~/.local/share/
 Move the assets inside config folder to you local .config directory
 mv config/* ~/.config
 
-
 Update Path:
 Ensure your script directory is in your $PATH (e.g., in .bashrc or .zshrc):
 
 export PATH="$HOME/.local/share/omablue/scripts:$PATH"
 
 ### Extra
+
 if you want to set a different sddm background:
 
 run0 mkdir -p /var/lib/sddm/themes
 run0 cp -r /usr/share/sddm/themes/* /var/lib/sddm/themes/
 rename the copied folder in from something like "fedora-sway"" in "secureblue"
-edit theme.conf by choosing the background you like to see for eg. 
+edit theme.conf by choosing the background you like to see for eg.
 background=/usr/share/backgrounds/secureblue/secureblue-blue.png
 
 edit or create /etc/sddm.conf.d/theme-path.conf by adding the following lines
@@ -105,10 +90,9 @@ edit or create /etc/sddm.conf.d/theme-path.conf by adding the following lines
 ThemeDir=/var/lib/sddm/themes
 Current=secureblue
 
-
 ## Contributing & Credits
 
-This project is inspired by omarchy and many of the utility are based on the omarchy or at least ispired by them. 
+This project is inspired by omarchy and many of the utility are based on the omarchy or at least ispired by them.
 
 A significant portion of the logic in these scripts was inspired by or adapted from community efforts (including vibecoding and AI-assisted drafts).
 
