@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # --- Secureblue Header ---
 # Ensure the path is correctly set for the atomic environment
@@ -36,7 +37,7 @@ if [ -z "$selected_line" ]; then
 fi
 
 # Extract the Application ID (the second column)
-app_id=$(echo "$selected_line" | awk '{print $2}')
+app_id=$(echo "$selected_line" | awk -F'\t' '{gsub(/^[ \t]+|[ \t]+$/, "", $2); print $2}')
 
 # 4. Removal Process
 # Clear terminal and start the atomic removal
@@ -45,16 +46,20 @@ echo "Starting atomic removal for: $app_id"
 echo "-----------------------------------------------------"
 
 # Perform explicit uninstallation
-flatpak uninstall "$app_id" -y
+if flatpak uninstall "$app_id" -y; then
+  REMOVE_STATUS=0
+else
+  REMOVE_STATUS=1
+fi
 
 # 5. Post-Removal Cleanup
 # Remove unused runtimes and data to keep the atomic system lean
 echo ""
 echo "Cleaning up unused dependencies..."
-flatpak uninstall --unused -y
+flatpak uninstall --unused -y || true
 
 # Final Check and Notification
-if [ $? -eq 0 ]; then
+if [ $REMOVE_STATUS -eq 0 ]; then
   notify-send -u normal -i "user-trash" "Success" "$app_id removed and system cleaned."
 else
   notify-send -u critical -i "dialog-error" "Failed" "Could not remove $app_id."

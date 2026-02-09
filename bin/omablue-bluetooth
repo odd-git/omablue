@@ -13,9 +13,14 @@ PATH="/usr/bin:/usr/local/bin:/bin"
 readonly SCAN_TIMEOUT=15
 readonly MAC_REGEX='^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
 
-# Cleanup function for scan process
+# Global PID for scan process cleanup
+SCAN_PID=""
+
+# Cleanup function for scan process — uses stored PID instead of broad pkill -f
 cleanup_scan() {
-  pkill -f "bluetoothctl scan" 2>/dev/null || true
+  if [[ -n "$SCAN_PID" ]] && kill -0 "$SCAN_PID" 2>/dev/null; then
+    kill "$SCAN_PID" 2>/dev/null || true
+  fi
 }
 
 # Trap to ensure cleanup
@@ -158,7 +163,8 @@ main() {
 
       # Start scan in background with timeout
       bluetoothctl scan on &>/dev/null &
-      local scan_pid=$!
+      SCAN_PID=$!
+      local scan_pid=$SCAN_PID
 
       # Wait for devices to appear
       sleep 3

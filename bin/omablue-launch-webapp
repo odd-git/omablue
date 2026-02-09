@@ -1,12 +1,24 @@
 #!/bin/bash
-# Riceve: URL, PROFILO, BINARIO_BROWSER
+set -euo pipefail
+# Receives: URL, PROFILE, BROWSER_BINARY
 
 APP_URL="$1"
 PROFILE_DIR="$2"
 BROWSER_BIN=$(echo "$3" | tr -d '"')
 
+if [[ -z "$APP_URL" || -z "$PROFILE_DIR" || -z "$BROWSER_BIN" ]]; then
+  exit 1
+fi
+
+# Validate BROWSER_BIN is a known browser
+KNOWN_BROWSERS="brave google-chrome-stable chromium microsoft-edge-stable vivaldi helium-browser trivalent"
+BROWSER_NAME=$(basename "$BROWSER_BIN")
+if ! echo "$KNOWN_BROWSERS" | grep -qw "$BROWSER_NAME"; then
+  exit 1
+fi
+
 if [[ -n "$APP_URL" ]]; then
-  # Lancio pulito senza terminale appeso
+  # Clean launch without hanging terminal
   nohup "$BROWSER_BIN" --profile-directory="$PROFILE_DIR" --app="$APP_URL" >/dev/null 2>&1 &
   disown
   exit 0

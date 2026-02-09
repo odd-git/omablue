@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Force correct path for gum and brew
 export PATH="$HOME/.local/share/omablue/bin:$PATH"
@@ -51,7 +52,7 @@ fi
 clear
 PACKAGE_NAMES=$(echo "$SELECTED" | awk '{print $1}')
 
-for PACKAGE in $PACKAGE_NAMES; do
+while IFS= read -r PACKAGE; do
   echo -e "Removing: \e[31m$PACKAGE\e[0m..."
 
   if brew uninstall "$PACKAGE"; then
@@ -59,7 +60,7 @@ for PACKAGE in $PACKAGE_NAMES; do
   else
     echo -e "\e[31mError during removal of $PACKAGE\e[0m"
   fi
-done
+done <<< "$PACKAGE_NAMES"
 
 # Keep terminal open to verify logs
 echo -e "\n\e[32mCleanup process finished.\e[0m"

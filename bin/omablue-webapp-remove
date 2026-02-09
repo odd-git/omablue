@@ -20,7 +20,7 @@ if [ "$#" -eq 0 ]; then
   # 2. Check if there are apps to remove
   if ((${#WEB_APPS[@]} == 0)); then
     echo "No web apps found to remove."
-    notify-send "Omarchy" "No web apps found."
+    notify-send "Omablue" "No web apps found."
     exit 0
   fi
 
@@ -56,7 +56,7 @@ for APP_NAME in "${APP_NAMES[@]}"; do
   rm -f "$ICON_DIR/$APP_NAME.png"
   rm -f "$ICON_DIR/$APP_NAME.jpg"
 
-  notify-send "Omarchy" "Removed: $APP_NAME"
+  notify-send "Omablue" "Removed: $APP_NAME"
   echo "Removal of $APP_NAME completed."
 done
 

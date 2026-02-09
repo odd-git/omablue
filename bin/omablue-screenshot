@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # --- Secureblue Header ---
 # Maintain consistency for Homebrew and local Omablue scripts
@@ -17,11 +18,11 @@ if [ -n "$1" ]; then
 else
   # If Rofi is already active, we cannot launch another instance
   # We default to 'Select Area' which works over existing overlays
-  if pgrep -x "rofi" >/dev/null; then
+  if pgrep -x "rofi" >/dev/null 2>&1; then
     CHOICE="Select Area"
   else
     # Launch Rofi menu for manual selection
-    CHOICE=$(echo -e "Select Area\nActive Window\nFullscreen" | rofi -dmenu -p "Capture" -config ~/.config/rofi/config.rasi)
+    CHOICE=$(echo -e "Select Area\nActive Window\nFullscreen" | rofi -dmenu -p "Capture" -config ~/.config/rofi/config.rasi) || true
   fi
 fi
 
@@ -31,7 +32,7 @@ fi
 case $CHOICE in
 "Select Area")
   # Slurp creates a native Wayland overlay to select screen regions
-  GEOMETRY=$(slurp -b "#00000044" -c "#cba6f7" -w 2)
+  GEOMETRY=$(slurp -b "#00000044" -c "#cba6f7" -w 2) || true
   ;;
 "Active Window")
   # Query the Sway tree to find the coordinates of the focused window

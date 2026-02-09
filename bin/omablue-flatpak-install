@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # --- Secureblue Header ---
 PATH="/usr/bin:/usr/local/bin:$PATH"
@@ -18,7 +19,7 @@ if [ -z "$TARGET_REMOTE" ]; then
 fi
 
 if [ -z "$TARGET_REMOTE" ]; then
-  notify-send -u critical "Flatpak Error" "Nessun remote configurato."
+  notify-send -u critical "Flatpak Error" "No remote configured."
   exit 1
 fi
 
@@ -51,9 +52,7 @@ echo "Installation of  $app_id"
 echo "Remote: $TARGET_REMOTE"
 echo "-----------------------------------------------------"
 
-flatpak install --noninteractive -y "$TARGET_REMOTE" "$app_id"
-
-if [ $? -eq 0 ]; then
+if flatpak install --noninteractive -y "$TARGET_REMOTE" "$app_id"; then
   notify-send -u normal -i "software-installed" "Success" "$app_id installed properly."
 else
   notify-send -u critical -i "dialog-error" "Failed" " Error during installation of  $app_id."

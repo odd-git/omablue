@@ -67,10 +67,20 @@ manage_hotspot() {
       fi
       HPASS=$(cat "$PASS_FILE")
       notify-send -a "Network" "Hotspot" "Activating..."
-      if nmcli device wifi hotspot ssid "$(hostname)" password "$HPASS" ifname "$INTERFACE"; then
-        notify-send -a "Network" -i folder-remote "Hotspot" "Active: $(hostname)"
+      # Use pre-configured connection to avoid exposing password in /proc/*/cmdline
+      if nmcli connection show Hotspot &>/dev/null; then
+        nmcli connection modify Hotspot wifi-sec.psk "$HPASS"
+        if nmcli connection up Hotspot; then
+          notify-send -a "Network" -i folder-remote "Hotspot" "Active: $(hostname)"
+        else
+          notify-send -u critical -a "Network" "Error" "Failed to activate hotspot"
+        fi
       else
-        notify-send -u critical -a "Network" "Error" "Failed to activate hotspot"
+        if nmcli device wifi hotspot ssid "$(hostname)" password "$HPASS" ifname "$INTERFACE"; then
+          notify-send -a "Network" -i folder-remote "Hotspot" "Active: $(hostname)"
+        else
+          notify-send -u critical -a "Network" "Error" "Failed to activate hotspot"
+        fi
       fi
     fi
     ;;
@@ -122,6 +132,7 @@ case "$CHOSEN" in
       notify-send -a "Network" "Cancelled" "Connection cancelled"
       exit 0
     fi
+    # Note: password is visible in /proc/*/cmdline; inherent nmcli limitation
     if nmcli device wifi connect "$SSID" password "$PASS"; then
       notify-send -a "Network" -i network-wireless-symbolic "Connected" "Successfully connected to $SSID"
     else

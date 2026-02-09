@@ -10,6 +10,7 @@ PID_FILE="$HOME/.cache/omablue-caffeine.pid"
 # Ensure cache directory exists
 mkdir -p "$HOME/.cache"
 
+# Note: TOCTOU race between reading PID and checking it; acceptable for single-user desktop
 is_active() {
     if [[ -f "$PID_FILE" ]]; then
         PID=$(cat "$PID_FILE")

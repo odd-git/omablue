@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # --- 1. Global Environment & Path Injection ---
 # We force Homebrew and local bins into the PATH so the menu and its children see them.
@@ -31,8 +32,7 @@ menu() {
   local options
   options=$(printf "%s\n" "$@")
   local selection
-  selection=$(echo -e "$options" | rofi -dmenu -i -p "$prompt" -theme my_theme.rasi)
-  if [[ $? -ne 0 ]]; then exit 0; fi
+  selection=$(echo -e "$options" | rofi -dmenu -i -p "$prompt" -theme my_theme.rasi) || exit 0
   echo "$selection"
 }
 
@@ -105,13 +105,20 @@ show_system_menu() {
   choice=$(menu "System" " Lock" "󰜉 Restart" "󰐥 Shutdown")
   case "${choice,,}" in
   *lock*) swaylock ;;
-  *restart*) systemctl reboot ;;
-  *shutdown*) systemctl poweroff ;;
+  *restart*)
+    CONFIRM=$(echo -e "Yes\nNo" | rofi -dmenu -p "Confirm Reboot?" -i) || true
+    [[ "$CONFIRM" == "Yes" ]] && systemctl reboot
+    ;;
+  *shutdown*)
+    CONFIRM=$(echo -e "Yes\nNo" | rofi -dmenu -p "Confirm Shutdown?" -i) || true
+    [[ "$CONFIRM" == "Yes" ]] && systemctl poweroff
+    ;;
   *) back_to ;;
   esac
 }
 
 # --- 4. Main Menu ---
+# Note: show_main_menu and back_to use recursive calls; safe for interactive use
 
 show_main_menu() {
   local choice

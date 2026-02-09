@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 # Omablue Battery Monitor - Secureblue Edition
 # Handles Low (20%) and Full (>=98%) notifications
 
@@ -8,7 +9,9 @@ LOW_FLAG="$XDG_RUNTIME_DIR/omablue_bat_low"
 FULL_FLAG="$XDG_RUNTIME_DIR/omablue_bat_full"
 
 # Fetch stats
-UP_INFO=$(upower -i $(upower -e | grep 'BAT'))
+BAT_DEV=$(upower -e | grep 'BAT' | head -n1)
+[[ -z "$BAT_DEV" ]] && exit 0
+UP_INFO=$(upower -i "$BAT_DEV")
 LEVEL=$($HOME/.local/share/omablue/bin/omablue-battery-remaining)
 STATE=$(echo "$UP_INFO" | awk '/state/ {print $2}')
 

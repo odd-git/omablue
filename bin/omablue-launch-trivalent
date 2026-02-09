@@ -31,7 +31,7 @@ SELECTED_NAME=$(echo "$PROFILE_DATA" | cut -d'|' -f1 | rofi -dmenu -i -p "󰖟 T
 
 # --- 5. Launch Logic ---
 # Retrieve the folder/identifier
-SELECTED_ID=$(echo "$PROFILE_DATA" | grep "^$SELECTED_NAME|" | cut -d'|' -f2 | head -n 1)
+SELECTED_ID=$(echo "$PROFILE_DATA" | awk -F'|' -v name="$SELECTED_NAME" '$1 == name {print $2; exit}')
 
 if [[ "$SELECTED_ID" == "GUEST_SESSION" ]]; then
   # Launching Guest Mode

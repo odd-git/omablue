@@ -9,13 +9,19 @@ APP_ID="${1:-TUI.tile}"
 # Arg 2: The Command to run (e.g., "nvim", "btop")
 CMD_EXEC="$2"
 
-# 2. Robust PATH Setup [cite: 1]
+# 2. Robust PATH Setup
 # Ensures we find Homebrew binaries and local scripts
 export PATH="$HOME/.local/share/omablue/bin:$HOME/.local/bin:/home/linuxbrew/.linuxbrew/bin:/home/linuxbrew/.linuxbrew/sbin:/usr/local/bin:/usr/bin:/bin:$PATH"
 
 # 3. Validation
 if [[ -z "$CMD_EXEC" ]]; then
   notify-send -u critical "Omablue Error" "No command provided to launcher."
+  exit 1
+fi
+
+# Security: reject shell metacharacters to prevent command injection
+if [[ "$CMD_EXEC" =~ [\;\&\|\`\$\(] ]]; then
+  notify-send -u critical "Omablue Error" "Invalid command in launcher."
   exit 1
 fi
 

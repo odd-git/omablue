@@ -1,4 +1,5 @@
 #!/bin/bash
+set -euo pipefail
 
 # Omablue: The Secureblue Theme Engine
 # Architecture: Atomic / Sway / Ghostty / Dunst
@@ -32,7 +33,7 @@ ln -nsf "$THEME_PATH" "$CURRENT_THEME_LINK"
 if [[ -f "$THEME_PATH/ghostty.conf" ]]; then
   ln -nsf "$THEME_PATH/ghostty.conf" "$HOME/.config/ghostty/theme_current"
   # Signal Ghostty to live-reload configuration without closing active windows
-  pkill -USR1 ghostty
+  pkill -USR1 ghostty 2>/dev/null || true
 fi
 
 # --- 3. Dunst Notification Management (Atomic Fusion Strategy) ---
@@ -48,7 +49,7 @@ if [[ -f "$DUNST_BASE" && -f "$THEME_DUNST" ]]; then
   cat "$DUNST_BASE" "$THEME_DUNST" >"$DUNST_TARGET"
 
   # Clean Restart: Terminate Dunst and allow DBus to restart it with new config
-  killall dunst 2>/dev/null
+  killall dunst 2>/dev/null || true
 
   # Brief pause to ensure the process has exited
   sleep 0.5
@@ -73,7 +74,7 @@ fi
 GENERATED_DUNST="$CURRENT_DIR/dunst-theme.conf"
 if [[ ! -f "$THEME_DUNST" && -f "$GENERATED_DUNST" && -f "$DUNST_BASE" ]]; then
   cat "$DUNST_BASE" "$GENERATED_DUNST" > "$DUNST_TARGET"
-  killall dunst 2>/dev/null
+  killall dunst 2>/dev/null || true
   sleep 0.3
 fi
 
@@ -84,7 +85,7 @@ if [[ -f "$WAYBAR_COLORS" ]]; then
   ln -sf "$WAYBAR_COLORS" "$HOME/.config/waybar/colors.css"
 fi
 # Signal Waybar to reload styles
-pkill -SIGUSR2 waybar 2>/dev/null
+pkill -SIGUSR2 waybar 2>/dev/null || true
 
 # --- 5b. Apply Rofi Theme ---
 # Symlink rofi colors to rofi config directory
@@ -101,7 +102,7 @@ if [[ -f "$FOOT_THEME" ]]; then
 fi
 
 # --- 6. Reload Sway Configuration ---
-swaymsg reload 2>/dev/null
+swaymsg reload 2>/dev/null || true
 
 # --- 7. Save Current Theme Name ---
 echo "$THEME_NAME" > "$CURRENT_DIR/theme.name"

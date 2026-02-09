@@ -1,7 +1,15 @@
 #!/usr/bin/env bash
+set -euo pipefail
 
 # --- Secureblue Sway Architect: Audio Manager ---
 # Optimized for Pipewire/Wireplumber hardware endpoints
+
+for cmd in wpctl rofi notify-send; do
+  if ! command -v "$cmd" &>/dev/null; then
+    notify-send -u critical "Error" "$cmd is required." 2>/dev/null
+    exit 1
+  fi
+done
 
 get_vol() {
   wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{print $2 * 100}'
@@ -14,12 +22,12 @@ notify_vol() {
 
 # Main Menu
 OPTIONS="󰓃 Select Output\n󰍬 Select Input (Mic)\n󰔡 Toggle Mute\n󰝝 Set Volume"
-CHOSEN=$(echo -e "$OPTIONS" | rofi -dmenu -p "Audio" -i -width 25)
+CHOSEN=$(echo -e "$OPTIONS" | rofi -dmenu -p "Audio" -i -width 25) || exit 0
 
 case "$CHOSEN" in
 *"Select Output")
   SINK_LIST=$(wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\.' | sed 's/[│├└─]//g; s/^[[:space:]]*//')
-  SEL_SINK=$(echo -e "$SINK_LIST" | rofi -dmenu -p "Output Device" -i)
+  SEL_SINK=$(echo -e "$SINK_LIST" | rofi -dmenu -p "Output Device" -i) || true
 
   if [ -n "$SEL_SINK" ]; then
     SINK_ID=$(echo "$SEL_SINK" | grep -oE '^[0-9]+')
@@ -29,7 +37,7 @@ case "$CHOSEN" in
 
 *"Select Input")
   SOURCE_LIST=$(wpctl status | sed -n '/Sources:/,/Filters:/p' | grep -E '[0-9]+\.' | sed 's/[│├└─]//g; s/^[[:space:]]*//')
-  SEL_SOURCE=$(echo -e "$SOURCE_LIST" | rofi -dmenu -p "Microphone" -i)
+  SEL_SOURCE=$(echo -e "$SOURCE_LIST" | rofi -dmenu -p "Microphone" -i) || true
 
   if [ -n "$SEL_SOURCE" ]; then
     SOURCE_ID=$(echo "$SEL_SOURCE" | grep -oE '^[0-9]+')
@@ -43,8 +51,8 @@ case "$CHOSEN" in
   ;;
 
 *"Set Volume")
-  VOL_VAL=$(seq 0 5 100 | rofi -dmenu -p "Set Volume %" -i)
-  if [ -n "$VOL_VAL" ]; then
+  VOL_VAL=$(seq 0 5 100 | rofi -dmenu -p "Set Volume %" -i) || true
+  if [[ "$VOL_VAL" =~ ^[0-9]+$ ]] && [ "$VOL_VAL" -ge 0 ] && [ "$VOL_VAL" -le 100 ]; then
     wpctl set-volume @DEFAULT_AUDIO_SINK@ "$VOL_VAL%"
     notify_vol
   fi
