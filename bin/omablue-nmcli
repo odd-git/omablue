@@ -1,103 +1,144 @@
 #!/usr/bin/env bash
 
 # --- Secureblue Sway Architect: Network Manager ---
-# Improved version for robustness and Sway/Wayland compatibility
+# Optimized for Fedora Atomic & Dunst integration
+# Enhanced security and error handling
+
+set -euo pipefail
+
+# Dependency check
+for cmd in nmcli rofi notify-send; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: Required command '$cmd' not found" >&2
+    exit 1
+  fi
+done
 
 CONFIG_DIR="$HOME/.config/sway-network"
 mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
 PASS_FILE="$CONFIG_DIR/hotspot_pass"
 
-# Get the first active wifi device
-INTERFACE=$(nmcli -t -f DEVICE,TYPE device | grep :wifi | cut -d: -f1 | head -n1)
+# Get the primary wifi interface
+INTERFACE=$(nmcli -t -f DEVICE,TYPE device | grep wifi | cut -d: -f1 | head -n1)
 
-# Helper for notifications
-notify() {
-  notify-send -a "Network" -i "$1" "$2"
-}
+# Validate interface exists
+if [ -z "$INTERFACE" ]; then
+  notify-send -u critical -a "Network" "Error" "No WiFi interface found"
+  exit 1
+fi
 
 toggle_wifi() {
   STATE=$(nmcli radio wifi)
   if [ "$STATE" = "enabled" ]; then
+    nmcli device disconnect "$INTERFACE" 2>/dev/null || true
     nmcli radio wifi off
-    notify "network-wireless-off-symbolic" "WiFi: DISABLED"
+    notify-send -a "Network" -i network-wireless-off-symbolic "WiFi" "Disabled"
   else
     nmcli radio wifi on
-    notify "network-wireless-symbolic" "WiFi: ENABLED"
+    notify-send -a "Network" -i network-wireless-symbolic "WiFi" "Enabled"
   fi
 }
 
 manage_hotspot() {
   HOTSPOT_OPTIONS="󰖩 Toggle Hotspot\n󰒄 Set/Change Password"
-  SEL=$(echo -e "$HOTSPOT_OPTIONS" | rofi -dmenu -p "Hotspot Settings" -i)
+  SEL=$(echo -e "$HOTSPOT_OPTIONS" | rofi -dmenu -p "Hotspot" -i -width 20 -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
 
   case "$SEL" in
   *"Toggle Hotspot")
-    # Check if a connection named 'Hotspot' is active
-    IS_ACTIVE=$(nmcli -t -f NAME,DEVICE connection show --active | grep "Hotspot")
-
+    # Check if hotspot is active (use || true for set -e compatibility)
+    IS_ACTIVE=$(nmcli -t -f NAME,DEVICE connection show --active | grep "Hotspot" || true)
     if [ -n "$IS_ACTIVE" ]; then
-      nmcli con down Hotspot && notify "network-outline" "Hotspot: DEACTIVATED"
+      nmcli con down Hotspot && notify-send -a "Network" "Hotspot" "Deactivated"
     else
-      # Create password file if missing
+      # Validate or create password
       if [ ! -f "$PASS_FILE" ]; then
-        HPASS=$(rofi -dmenu -p "No password set. Enter new (min 8 chars):" -password)
-        [ ${#HPASS} -lt 8 ] && {
-          notify "dialog-error" "Password too short!"
+        NEW_PASS=$(rofi -dmenu -p "Set Hotspot Password (min 8 chars)" -password -me-select-entry '' -me-accept-entry MousePrimary)
+        if [ -z "$NEW_PASS" ]; then
+          notify-send -u critical -a "Network" "Error" "Password required"
           return
-        }
-        echo "$HPASS" >"$PASS_FILE"
+        fi
+        if [ ${#NEW_PASS} -lt 8 ]; then
+          notify-send -u critical -a "Network" "Error" "Password too short (min 8 chars)"
+          return
+        fi
+        echo "$NEW_PASS" >"$PASS_FILE"
+        chmod 600 "$PASS_FILE"
       fi
-
       HPASS=$(cat "$PASS_FILE")
-      # Ensure the Hotspot profile exists and start it
-      nmcli device wifi hotspot ssid "$(hostname)" password "$HPASS" ifname "$INTERFACE" &&
-        notify "folder-remote" "Hotspot: ACTIVATED (SSID: $(hostname))"
+      notify-send -a "Network" "Hotspot" "Activating..."
+      if nmcli device wifi hotspot ssid "$(hostname)" password "$HPASS" ifname "$INTERFACE"; then
+        notify-send -a "Network" -i folder-remote "Hotspot" "Active: $(hostname)"
+      else
+        notify-send -u critical -a "Network" "Error" "Failed to activate hotspot"
+      fi
     fi
     ;;
   *"Set/Change Password")
-    NEW_PASS=$(rofi -dmenu -p "New Hotspot Password" -password)
-    if [ ${#NEW_PASS} -ge 8 ]; then
-      echo "$NEW_PASS" >"$PASS_FILE"
-      notify "emblem-ok" "Hotspot password updated"
+    NEW_PASS=$(rofi -dmenu -p "New Password (min 8 chars)" -password -me-select-entry '' -me-accept-entry MousePrimary)
+    if [ -z "$NEW_PASS" ]; then
+      notify-send -u critical -a "Network" "Error" "Password cannot be empty"
+    elif [ ${#NEW_PASS} -lt 8 ]; then
+      notify-send -u critical -a "Network" "Error" "Password too short (min 8 chars)"
     else
-      notify "dialog-error" "Error: Min 8 characters required"
+      echo "$NEW_PASS" >"$PASS_FILE"
+      chmod 600 "$PASS_FILE"
+      notify-send -a "Network" "Hotspot" "Password updated"
     fi
     ;;
   esac
 }
 
-# --- Main Menu ---
-MAIN_OPTIONS="󰖩 Connect to WiFi\n󰖪 Disconnect\n󰀞 Toggle WiFi\n󱚹 Hotspot Manager"
-CHOSEN=$(echo -e "$MAIN_OPTIONS" | rofi -dmenu -p "Network ($INTERFACE)" -i)
+# Main Menu
+MAIN_OPTIONS="󰖩 Connect\n󰖪 Disconnect\n󰀞 Toggle WiFi\n󱚹 Hotspot Manager"
+CHOSEN=$(echo -e "$MAIN_OPTIONS" | rofi -dmenu -p "Network" -i -width 25 -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
 
 case "$CHOSEN" in
-*"Connect"*)
-  # Rescan for networks
-  nmcli device wifi rescan
-  # Improved SSID listing: removes duplicates and empty lines
-  WIFI_LIST=$(nmcli --terse --fields "SSID,BARS,SECURITY" device wifi list | sed '/^--/d; s/\\:/|/g' | awk -F: '$1 != "" {print $1 " (" $2 " - " $3 ")"}' | sort -u)
+*Connect)
+  # Rescan for fresh network list
+  nmcli device wifi rescan 2>/dev/null || true
+  sleep 1  # Brief pause for scan to complete
 
-  SELECTED_SSID_FULL=$(echo -e "$WIFI_LIST" | rofi -dmenu -p "Select Network" -i)
-  [ -z "$SELECTED_SSID_FULL" ] && exit 0
+  # Fetch list with bars and security status
+  WIFI_LIST=$(nmcli --terse --fields "SSID,BARS,SECURITY" device wifi list | awk -F: '$1 != "" {print $1 " | " $2 " | " $3}' | sort -u -t'|' -k1,1)
 
-  # Extract SSID name (everything before the first open parenthesis)
-  SSID=$(echo "$SELECTED_SSID_FULL" | sed 's/ (.*//')
+  if [ -z "$WIFI_LIST" ]; then
+    notify-send -u critical -a "Network" "Error" "No networks found"
+    exit 1
+  fi
 
-  # Try to connect (if already saved)
-  if ! nmcli device wifi connect "$SSID"; then
-    # If connection fails, ask for password
-    PASS=$(rofi -dmenu -p "Password for $SSID" -password)
-    [ -z "$PASS" ] && exit 0
-    nmcli device wifi connect "$SSID" password "$PASS"
+  CHOSEN_SSID_LINE=$(echo -e "$WIFI_LIST" | rofi -dmenu -p "SSID" -i -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
+  [ -z "$CHOSEN_SSID_LINE" ] && exit 0
+
+  SSID=$(echo "$CHOSEN_SSID_LINE" | cut -d'|' -f1 | xargs)
+
+  # Immediate feedback
+  notify-send -a "Network" "Connecting to $SSID..."
+
+  # Attempt connection, if fails, ask for password
+  if ! nmcli device wifi connect "$SSID" 2>/dev/null; then
+    PASS=$(rofi -dmenu -p "Password for $SSID" -password -me-select-entry '' -me-accept-entry MousePrimary)
+    if [ -z "$PASS" ]; then
+      notify-send -a "Network" "Cancelled" "Connection cancelled"
+      exit 0
+    fi
+    if nmcli device wifi connect "$SSID" password "$PASS"; then
+      notify-send -a "Network" -i network-wireless-symbolic "Connected" "Successfully connected to $SSID"
+    else
+      notify-send -u critical -a "Network" "Error" "Failed to connect to $SSID"
+      exit 1
+    fi
+  else
+    notify-send -a "Network" -i network-wireless-symbolic "Connected" "Successfully connected to $SSID"
   fi
   ;;
-*"Disconnect"*)
-  nmcli device disconnect "$INTERFACE" && notify "network-offline" "Disconnected"
+*Disconnect)
+  nmcli device disconnect "$INTERFACE" && notify-send -a "Network" "Disconnected"
   ;;
-*"Toggle"*)
+*Toggle*)
   toggle_wifi
   ;;
-*"Hotspot"*)
+*Hotspot*)
   manage_hotspot
   ;;
 esac

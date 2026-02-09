@@ -1,0 +1,106 @@
+#!/bin/bash
+#
+# omablue-caffeine - Toggle caffeine mode (prevent system sleep/idle)
+# Usage: omablue-caffeine [on|off|toggle|status]
+#
+
+STATE_FILE="$HOME/.cache/omablue-caffeine.state"
+PID_FILE="$HOME/.cache/omablue-caffeine.pid"
+
+# Ensure cache directory exists
+mkdir -p "$HOME/.cache"
+
+is_active() {
+    if [[ -f "$PID_FILE" ]]; then
+        PID=$(cat "$PID_FILE")
+        if kill -0 "$PID" 2>/dev/null; then
+            return 0
+        else
+            # Process died, clean up
+            rm -f "$PID_FILE" "$STATE_FILE"
+            return 1
+        fi
+    fi
+    return 1
+}
+
+caffeine_on() {
+    if is_active; then
+        echo "Caffeine mode already active"
+        return 0
+    fi
+
+    # Start systemd-inhibit in background to prevent idle, sleep, and suspend
+    systemd-inhibit --what=idle:sleep:handle-lid-switch \
+                    --who="omablue-caffeine" \
+                    --why="Caffeine mode enabled" \
+                    --mode=block \
+                    sleep infinity &
+
+    PID=$!
+    echo "$PID" > "$PID_FILE"
+    echo "active" > "$STATE_FILE"
+
+    # Notify user
+    notify-send -a "Omablue" "Caffeine Mode" "Screen will stay awake" -i caffeine-on 2>/dev/null || true
+    echo "Caffeine mode enabled (PID: $PID)"
+}
+
+caffeine_off() {
+    if ! is_active; then
+        echo "Caffeine mode already inactive"
+        return 0
+    fi
+
+    PID=$(cat "$PID_FILE")
+    kill "$PID" 2>/dev/null
+    rm -f "$PID_FILE" "$STATE_FILE"
+
+    # Notify user
+    notify-send -a "Omablue" "Caffeine Mode" "Screen will auto-sleep normally" -i caffeine-off 2>/dev/null || true
+    echo "Caffeine mode disabled"
+}
+
+caffeine_toggle() {
+    if is_active; then
+        caffeine_off
+    else
+        caffeine_on
+    fi
+}
+
+caffeine_status() {
+    if is_active; then
+        echo "active"
+        exit 0
+    else
+        echo "inactive"
+        exit 1
+    fi
+}
+
+# Main
+case "${1:-toggle}" in
+    on|enable)
+        caffeine_on
+        ;;
+    off|disable)
+        caffeine_off
+        ;;
+    toggle)
+        caffeine_toggle
+        ;;
+    status)
+        caffeine_status
+        ;;
+    *)
+        echo "Usage: $0 [on|off|toggle|status]"
+        echo ""
+        echo "Commands:"
+        echo "  on/enable   - Enable caffeine mode (prevent sleep/idle)"
+        echo "  off/disable - Disable caffeine mode (allow sleep/idle)"
+        echo "  toggle      - Toggle caffeine mode (default)"
+        echo "  status      - Check if caffeine is active"
+        exit 1
+        ;;
+esac

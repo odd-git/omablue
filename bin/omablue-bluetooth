@@ -1,65 +1,242 @@
 #!/usr/bin/env bash
 
 # --- Secureblue Sway Architect: Bluetooth Manager ---
-# Keyboard-driven management via bluetoothctl and rofi
+# Secure keyboard-driven Bluetooth management via bluetoothctl and rofi
 
-# Function: Send consistent notifications
-notify_bt() {
-  notify-send -a "Bluetooth" -i bluetooth-symbolic "$1" -h string:x-dunst-stack-tag:bt
+# Strict error handling
+set -euo pipefail
+
+# Secure PATH
+PATH="/usr/bin:/usr/local/bin:/bin"
+
+# Constants
+readonly SCAN_TIMEOUT=15
+readonly MAC_REGEX='^([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$'
+
+# Cleanup function for scan process
+cleanup_scan() {
+  pkill -f "bluetoothctl scan" 2>/dev/null || true
 }
 
-# 1. Main Menu with Nerd Font Icons
-OPTIONS="󰂯 Connect to Paired\n󰒄 Pair New Device\n󰂰 Toggle Bluetooth\n󰂱 Disconnect All"
-CHOSEN=$(echo -e "$OPTIONS" | rofi -dmenu -p "Bluetooth" -i -width 25)
+# Trap to ensure cleanup
+trap cleanup_scan EXIT INT TERM
 
-case "$CHOSEN" in
-*"Connect to Paired")
-  DEVICE_LIST=$(bluetoothctl devices Paired | awk '{split($0,a," "); $1=$2=""; print $0 " |" a[2]}')
-
-  if [ -z "$DEVICE_LIST" ]; then
-    notify_bt "No paired devices found"
-    exit 0
-  fi
-
-  SEL_DEVICE=$(echo -e "$DEVICE_LIST" | rofi -dmenu -p "Connect to" -i)
-  [ -z "$SEL_DEVICE" ] && exit 0
-
-  MAC=$(echo "$SEL_DEVICE" | cut -d'|' -f2)
-  NAME=$(echo "$SEL_DEVICE" | cut -d'|' -f1 | xargs)
-
-  notify_bt "Connecting to $NAME..."
-  bluetoothctl connect "$MAC" && notify_bt "Connected: $NAME" || notify_bt "Failed to connect"
-  ;;
-
-*"Pair New Device")
-  notify_bt "Scanning for 15s..."
-  timeout 15s bluetoothctl scan on >/dev/null &
-  sleep 2
-
-  NEW_DEVICES=$(bluetoothctl devices | awk '{split($0,a," "); $1=$2=""; print $0 " |" a[2]}')
-  SEL_NEW=$(echo -e "$NEW_DEVICES" | rofi -dmenu -p "Pair with" -i)
-
-  [ -z "$SEL_NEW" ] && exit 0
-  MAC_NEW=$(echo "$SEL_NEW" | cut -d'|' -f2)
-
-  notify_bt "Pairing..."
-  bluetoothctl pair "$MAC_NEW" && bluetoothctl trust "$MAC_NEW" && bluetoothctl connect "$MAC_NEW"
-  ;;
-
-*"Toggle Bluetooth")
-  STATE=$(bluetoothctl show | grep "Powered:" | awk '{print $2}')
-  if [ "$STATE" = "yes" ]; then
-    bluetoothctl power off && notify_bt "Bluetooth: OFF"
-  else
-    bluetoothctl power on && notify_bt "Bluetooth: ON"
-  fi
-  ;;
-
-*"Disconnect All")
-  CONNECTED=$(bluetoothctl devices Connected | awk '{print $2}')
-  for dev in $CONNECTED; do
-    bluetoothctl disconnect "$dev"
+# Dependency check
+check_dependencies() {
+  local deps=("bluetoothctl" "rofi" "notify-send")
+  for dep in "${deps[@]}"; do
+    if ! command -v "$dep" &>/dev/null; then
+      echo "Error: $dep is required but not installed." >&2
+      exit 1
+    fi
   done
-  notify_bt "All devices disconnected"
-  ;;
-esac
+}
+
+# Bluetooth adapter check
+check_bluetooth() {
+  if ! bluetoothctl list 2>/dev/null | grep -q "Controller"; then
+    notify_bt "No Bluetooth adapter found" "critical"
+    exit 1
+  fi
+}
+
+# Secure notification function
+notify_bt() {
+  local message="$1"
+  local urgency="${2:-normal}"
+  notify-send -a "Bluetooth" -i bluetooth-symbolic -u "$urgency" "$message" \
+    -h string:x-dunst-stack-tag:bt 2>/dev/null || true
+}
+
+# Validate MAC address
+validate_mac() {
+  local mac="$1"
+  if [[ ! "$mac" =~ $MAC_REGEX ]]; then
+    notify_bt "Invalid MAC address format" "critical"
+    return 1
+  fi
+  return 0
+}
+
+# Get device info with status indicators
+get_device_info() {
+  local mac="$1"
+  local info
+  info=$(bluetoothctl info "$mac" 2>/dev/null || echo "")
+
+  local connected="󰂱"
+  local battery=""
+
+  if echo "$info" | grep -q "Connected: yes"; then
+    connected="󰂱"  # Connected icon
+    # Try to get battery level
+    local battery_level
+    battery_level=$(echo "$info" | grep "Battery Percentage" | awk '{print $4}' | tr -d '()' || echo "")
+    if [[ -n "$battery_level" ]]; then
+      battery=" 󰁹${battery_level}%"
+    fi
+  else
+    connected="󰂲"  # Disconnected icon
+  fi
+
+  echo "${connected}${battery}"
+}
+
+# Build device list with enhanced info
+build_device_list() {
+  local list_type="$1"
+  local devices
+
+  if [[ "$list_type" == "paired" ]]; then
+    devices=$(bluetoothctl devices Paired 2>/dev/null || echo "")
+  else
+    devices=$(bluetoothctl devices 2>/dev/null || echo "")
+  fi
+
+  if [[ -z "$devices" ]]; then
+    return 1
+  fi
+
+  while IFS= read -r line; do
+    if [[ "$line" =~ Device\ ([0-9A-Fa-f:]+)\ (.+) ]]; then
+      local mac="${BASH_REMATCH[1]}"
+      local name="${BASH_REMATCH[2]}"
+
+      if [[ "$list_type" == "paired" ]]; then
+        local status
+        status=$(get_device_info "$mac")
+        printf "%s %s|%s\n" "$status" "$name" "$mac"
+      else
+        printf "%s|%s\n" "$name" "$mac"
+      fi
+    fi
+  done <<< "$devices"
+
+  return 0
+}
+
+# Main execution
+main() {
+  check_dependencies
+  check_bluetooth
+
+  # Main Menu
+  local options="󰂯 Connect to Paired\n󰒄 Pair New Device\n󰂰 Toggle Bluetooth\n󰂱 Disconnect All"
+  local chosen
+  chosen=$(echo -e "$options" | rofi -dmenu -p "Bluetooth" -i -width 30) || exit 0
+
+  case "$chosen" in
+    *"Connect to Paired")
+      local device_list
+      if ! device_list=$(build_device_list "paired"); then
+        notify_bt "No paired devices found"
+        exit 0
+      fi
+
+      local sel_device
+      sel_device=$(echo "$device_list" | rofi -dmenu -p "Connect to" -i) || exit 0
+
+      # Extract MAC and name safely
+      local mac name
+      mac=$(echo "$sel_device" | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$' || echo "")
+      name=$(echo "$sel_device" | cut -d'|' -f1 | sed 's/[󰂱󰂲󰁹]//g' | xargs)
+
+      if ! validate_mac "$mac"; then
+        exit 1
+      fi
+
+      notify_bt "Connecting to ${name}..."
+      if bluetoothctl connect "$mac" &>/dev/null; then
+        notify_bt "Connected: ${name}"
+      else
+        notify_bt "Failed to connect to ${name}" "critical"
+      fi
+      ;;
+
+    *"Pair New Device")
+      notify_bt "Scanning for ${SCAN_TIMEOUT}s..."
+
+      # Start scan in background with timeout
+      bluetoothctl scan on &>/dev/null &
+      local scan_pid=$!
+
+      # Wait for devices to appear
+      sleep 3
+
+      local new_devices
+      if ! new_devices=$(build_device_list "all"); then
+        kill "$scan_pid" 2>/dev/null || true
+        notify_bt "No devices found" "critical"
+        exit 1
+      fi
+
+      local sel_new
+      sel_new=$(echo "$new_devices" | rofi -dmenu -p "Pair with" -i) || {
+        kill "$scan_pid" 2>/dev/null || true
+        exit 0
+      }
+
+      # Stop scanning
+      kill "$scan_pid" 2>/dev/null || true
+      cleanup_scan
+
+      # Extract MAC safely
+      local mac_new
+      mac_new=$(echo "$sel_new" | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}$' || echo "")
+
+      if ! validate_mac "$mac_new"; then
+        exit 1
+      fi
+
+      notify_bt "Pairing with device..."
+
+      if bluetoothctl pair "$mac_new" &>/dev/null && \
+         bluetoothctl trust "$mac_new" &>/dev/null && \
+         bluetoothctl connect "$mac_new" &>/dev/null; then
+        notify_bt "Successfully paired and connected"
+      else
+        notify_bt "Pairing failed" "critical"
+      fi
+      ;;
+
+    *"Toggle Bluetooth")
+      local state
+      state=$(bluetoothctl show 2>/dev/null | grep "Powered:" | awk '{print $2}' || echo "no")
+
+      if [[ "$state" == "yes" ]]; then
+        if bluetoothctl power off &>/dev/null; then
+          notify_bt "Bluetooth: OFF"
+        else
+          notify_bt "Failed to turn off Bluetooth" "critical"
+        fi
+      else
+        if bluetoothctl power on &>/dev/null; then
+          notify_bt "Bluetooth: ON"
+        else
+          notify_bt "Failed to turn on Bluetooth" "critical"
+        fi
+      fi
+      ;;
+
+    *"Disconnect All")
+      local connected
+      connected=$(bluetoothctl devices Connected 2>/dev/null | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}' || echo "")
+
+      if [[ -z "$connected" ]]; then
+        notify_bt "No connected devices"
+        exit 0
+      fi
+
+      local count=0
+      while IFS= read -r dev; do
+        if validate_mac "$dev" && bluetoothctl disconnect "$dev" &>/dev/null; then
+          ((count++))
+        fi
+      done <<< "$connected"
+
+      notify_bt "Disconnected $count device(s)"
+      ;;
+  esac
+}
+
+main "$@"
