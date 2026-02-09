@@ -4,14 +4,14 @@
 # Architecture: Atomic / Sway / Ghostty / Dunst
 
 # Check for required theme argument; exit if missing or set to "CNCLD"
-if [[ -z $1 && $1 != "CNCLD" ]]; then
+if [[ -z $1 || $1 == "CNCLD" ]]; then
   echo "Usage: omablue-theme-set <theme-name>"
   exit 1
 fi
 
 # Define paths for theme storage and the active symlink
 THEMES_DIR="$HOME/.local/share/omablue/themes"
-CURRENT_THEME_LINK="$HOME/.config/ombalue/current/theme"
+CURRENT_THEME_LINK="$HOME/.config/omablue/current/theme"
 
 # Normalize theme name: strip tags, convert to lowercase, and replace spaces with hyphens
 THEME_NAME=$(echo "$1" | sed -E 's/<[^>]+>//g' | tr '[:upper:]' '[:lower:]' | tr ' ' '-')
@@ -54,4 +54,60 @@ if [[ -f "$DUNST_BASE" && -f "$THEME_DUNST" ]]; then
   sleep 0.5
 
   # Send notification to verify the new notification style is active
-  notify-send -h string:x-dunst-stack-tag:
+  notify-send -h string:x-dunst-stack-tag:theme "Dunst" "Configuration reloaded"
+fi
+
+# --- 4. Generate Theme Files for All Applications ---
+CURRENT_DIR="$HOME/.config/omablue/current"
+mkdir -p "$CURRENT_DIR"
+
+# Find theme generator (in PATH or same directory as this script)
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+if [[ -x "$SCRIPT_DIR/omablue-theme-generate" ]]; then
+  "$SCRIPT_DIR/omablue-theme-generate" "$THEME_PATH" "$CURRENT_DIR"
+elif command -v omablue-theme-generate &>/dev/null; then
+  omablue-theme-generate "$THEME_PATH" "$CURRENT_DIR"
+fi
+
+# --- 4b. Apply Dunst Generated Theme (fallback if no dunst.conf in theme) ---
+GENERATED_DUNST="$CURRENT_DIR/dunst-theme.conf"
+if [[ ! -f "$THEME_DUNST" && -f "$GENERATED_DUNST" && -f "$DUNST_BASE" ]]; then
+  cat "$DUNST_BASE" "$GENERATED_DUNST" > "$DUNST_TARGET"
+  killall dunst 2>/dev/null
+  sleep 0.3
+fi
+
+# --- 5. Apply Waybar Theme ---
+# Symlink waybar colors to waybar config directory for CSS import
+WAYBAR_COLORS="$CURRENT_DIR/waybar-colors.css"
+if [[ -f "$WAYBAR_COLORS" ]]; then
+  ln -sf "$WAYBAR_COLORS" "$HOME/.config/waybar/colors.css"
+fi
+# Signal Waybar to reload styles
+pkill -SIGUSR2 waybar 2>/dev/null
+
+# --- 5b. Apply Rofi Theme ---
+# Symlink rofi colors to rofi config directory
+ROFI_COLORS="$CURRENT_DIR/rofi-colors.rasi"
+if [[ -f "$ROFI_COLORS" ]]; then
+  ln -sf "$ROFI_COLORS" "$HOME/.config/rofi/colors.rasi"
+fi
+
+# --- 5c. Apply Foot Theme ---
+# Symlink foot theme to foot config directory
+FOOT_THEME="$CURRENT_DIR/foot-theme.ini"
+if [[ -f "$FOOT_THEME" ]]; then
+  ln -sf "$FOOT_THEME" "$HOME/.config/foot/theme.ini"
+fi
+
+# --- 6. Reload Sway Configuration ---
+swaymsg reload 2>/dev/null
+
+# --- 7. Save Current Theme Name ---
+echo "$THEME_NAME" > "$CURRENT_DIR/theme.name"
+
+# --- 8. Success Notification ---
+notify-send -h string:x-dunst-stack-tag:theme \
+  "Theme Applied" \
+  "$THEME_NAME is now active" \
+  -i preferences-desktop-theme

@@ -1,45 +1,47 @@
 #!/bin/bash
 
 # --- 1. Global Environment & Path ---
-# Injecting paths to ensure jq and rofi are found [cite: 1, 2]
 export PATH="$HOME/.local/bin:$HOME/.local/share/omablue/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
 CONFIG_DIR="$HOME/.config/trivalent"
 LOCAL_STATE="$CONFIG_DIR/Local State"
 
 # --- 2. Dependencies Check ---
 if ! command -v jq &>/dev/null; then
-  notify-send "Error" "jq is required to parse browser profiles." [cite: 21, 69]
+  notify-send "Error" "jq is required to parse browser profiles."
   exit 1
 fi
 
 # --- 3. Profile Discovery ---
-# Extracting folder|name pairs from Local State
 if [[ -f "$LOCAL_STATE" ]]; then
+  # Extracting existing profiles
   PROFILE_DATA=$(jq -r '.profile.info_cache | to_entries[] | "\(.value.name)|\(.key)"' "$LOCAL_STATE" 2>/dev/null)
+
+  # Injecting the Guest Profile option at the top of the list
+  # Format: Display Name | Identifier
+  PROFILE_DATA=$(echo -e "Guest Profile|GUEST_SESSION\n$PROFILE_DATA")
 else
   notify-send "Error" "Trivalent Local State not found at $CONFIG_DIR"
   exit 1
 fi
 
-if [[ -z "$PROFILE_DATA" ]]; then
-  notify-send "Trivalent" "No profiles detected."
-  exit 1
-fi
-
 # --- 4. User Selection (Rofi) ---
-# We display only the 'name' (first field) to the user [cite: 7, 16]
 SELECTED_NAME=$(echo "$PROFILE_DATA" | cut -d'|' -f1 | rofi -dmenu -i -p "󰖟 Trivalent Profile" -theme my_theme.rasi)
 
 [[ -z "$SELECTED_NAME" ]] && exit 0
 
-# --- 5. Launch ---
-# Retrieve the folder name (second field) corresponding to the selected name
-PROFILE_DIR=$(echo "$PROFILE_DATA" | grep "^$SELECTED_NAME|" | cut -d'|' -f2 | head -n 1)
+# --- 5. Launch Logic ---
+# Retrieve the folder/identifier
+SELECTED_ID=$(echo "$PROFILE_DATA" | grep "^$SELECTED_NAME|" | cut -d'|' -f2 | head -n 1)
 
-if [[ -n "$PROFILE_DIR" ]]; then
-  # Launching without an attached terminal [cite: 18]
-  nohup trivalent --profile-directory="$PROFILE_DIR" >/dev/null 2>&1 &
-  disown [cite: 18]
+if [[ "$SELECTED_ID" == "GUEST_SESSION" ]]; then
+  # Launching Guest Mode
+  notify-send -u low -a "Trivalent" "Launching Guest Session" "No data will be saved."
+  nohup trivalent --guest >/dev/null 2>&1 &
+  disown
+elif [[ -n "$SELECTED_ID" ]]; then
+  # Launching Standard Profile
+  nohup trivalent --profile-directory="$SELECTED_ID" >/dev/null 2>&1 &
+  disown
 else
-  notify-send "Error" "Could not resolve profile directory for $SELECTED_NAME"
+  notify-send "Error" "Could not resolve profile for $SELECTED_NAME"
 fi

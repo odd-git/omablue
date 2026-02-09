@@ -6,7 +6,7 @@
     bindsym $mod+Return exec $term
 
     # Kill focused window
-    bindsym $mod+w kill
+    bindsym $mod+q kill
 
     # Start a filemanger
     bindsym $mod+Shift+f exec $file

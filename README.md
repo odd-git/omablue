@@ -1,3 +1,19 @@
+---
+categories:
+  - "[[Tasks]]"
+type:
+  - "[[UI]]"
+org:
+  - "[[MyHovertime]]"
+start:
+year: 2025
+url:
+status:
+tags:
+  - Omablue
+related:
+  - "[[Omablue]]"
+---
 # Omablue
 
 Omablue aims to be the definitive "Omarchy-inspired" experience for secureblue. It is designed for users who demand a seamless, keyboard-driven tiling window manager environment on top of an ultra-secure, hardened Fedora Atomic base.
@@ -22,29 +38,30 @@ Minimalist Aesthetics: Clean, functional UI with integrated notification handlin
 
 The project is currently in its early stages (MVP). Contributions from the community and experienced developers are highly encouraged.
 
-[ ] Setup Script: Automated deployment via ujust integration (In Progress).
+- [ ] Setup Script: Automated deployment via ujust integration (In Progress).
 
-[ ] Themes: High-contrast and modern palettes (Catppuccin/Gruvbox).
+- [ ] Themes: High-contrast and modern palettes (Catppuccin/Gruvbox).
 
-[x] Omablue Menu: Custom launcher for system utilities.
+- [x] Omablue Menu: Custom launcher for system utilities.
 
-[x] Security-Hardened Utilities:
+- [ ] Security-Hardened Utilities
 
-[x] Screenshot utility (Wayland native).
+- [x] Screenshot utility (Wayland native).
 
-[x] Webapp manager (Isolated browser instances).
+- [x] Webapp manager (Isolated browser instances).
 
-[x] Flatpak integration.
+- [x] Flatpak
+ integration.
 
-[x] System Management (TUI/CLI):
+- [x] System Management (TUI/CLI):
 
-[x] Network management.
+- [x] Network management.
 
-[x] Bluetooth control.
+- [x] Bluetooth control.
 
-[x] Audio/Pipewire integration.
+- [x] Audio/Pipewire integration.
 
-[ ] TUI Tooling: Integrated btop, lazygit, and lazydocker overlays.
+- [x] TUI Tooling: Integrated btop, lazygit, and lazydocker overlays.
 
 ## Getting Started
 

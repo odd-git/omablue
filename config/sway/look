@@ -4,7 +4,7 @@ default_border pixel
 gaps inner 16
 
 include '$(/usr/libexec/sway/layered-include "/usr/share/sway/config.d/*.conf" "/etc/sway/config.d/*.conf" "${XDG_CONFIG_HOME:-$HOME/.config}/sway/config.d/*.conf")'
-include catppuccin-mocha.txt   
+include ~/.config/omablue/current/sway-theme.txt
 #Theme
 # target                 title     bg    text   indicator  border
 client.focused           $lavender $base $text  $rosewater $lavender

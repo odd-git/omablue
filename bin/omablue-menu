@@ -82,7 +82,7 @@ show_remove_menu() {
   case "${choice,,}" in
   *webapp*) run_tui "$OMABIN/omablue-webapp-remove" ;;
   *brew*) run_tui "$OMABIN/omablue-brew-remove" ;;
-  *tui*) run_tui "$OMABIN/omarchy-tui-remove" ;;
+  *tui*) run_tui "$OMABIN/omablue-tui-remove" ;;
   *flatpak*) run_tui "$OMABIN/omablue-flatpak-remove" ;;
   *) back_to ;;
   esac
@@ -126,8 +126,4 @@ show_main_menu() {
   esac
 }
 
-if [[ -n "${1-}" ]]; then
-  show_main_menu
-else
-  show_main_menu
-fi
+show_main_menu

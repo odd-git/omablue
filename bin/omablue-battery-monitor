@@ -9,7 +9,7 @@ FULL_FLAG="$XDG_RUNTIME_DIR/omablue_bat_full"
 
 # Fetch stats
 UP_INFO=$(upower -i $(upower -e | grep 'BAT'))
-LEVEL=$($HOME/.local/bin/omablue-battery-remaining)
+LEVEL=$($HOME/.local/share/omablue/bin/omablue-battery-remaining)
 STATE=$(echo "$UP_INFO" | awk '/state/ {print $2}')
 
 # --- Logic: Low Battery (20%) ---
