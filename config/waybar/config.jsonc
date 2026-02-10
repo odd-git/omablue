@@ -12,6 +12,7 @@
     "network",
     "pulseaudio",
     "cpu",
+    "custom/caffeine",
     "battery"
   ],
   "sway/workspaces": {
@@ -58,7 +59,7 @@
     "interval": 5,
     "format": "󰍛",
     "on-click": "omarchy-launch-or-focus-tui btop",
-    "on-click-right": "ghostty"
+    "on-click-right": "foot"
   },
   "clock": {
     "format": "{:L%A %H:%M}",
@@ -128,6 +129,14 @@
   "custom/expand-icon": {
     "format": "",
     "tooltip": false
+  },
+  "custom/caffeine": {
+    "format": "{}",
+    "exec": "if omablue-caffeine status >/dev/null 2>&1; then echo ' 󰅶 '; else echo ' 󰾪 '; fi",
+    "on-click": "omablue-caffeine toggle",
+    "interval": 5,
+    "tooltip-format": "Caffeine Mode\n\nClick to toggle",
+    "return-type": ""
   },
   "custom/screenrecording-indicator": {
     "on-click": "omarchy-cmd-screenrecord",
