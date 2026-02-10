@@ -10,8 +10,8 @@ umask 022
 REPO_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OMABLUE_SHARE="$HOME/.local/share/omablue"
 OMABLUE_CONFIG="$HOME/.config/omablue"
-BACKUP_DIRS=(sway waybar rofi dunst foot swaylock Thunar gtk-3.0 nvim)
-CONFIG_DIRS=(sway waybar rofi dunst foot swaylock Thunar gtk-3.0 nvim)
+BACKUP_DIRS=(sway waybar rofi dunst foot swaylock Thunar gtk-3.0 nvim omablue)
+CONFIG_DIRS=(sway waybar rofi dunst foot swaylock Thunar gtk-3.0 nvim omablue)
 BREW_BIN=""
 
 # shellcheck source=setup/lib.sh
@@ -94,16 +94,41 @@ phase_backup() {
         return
     fi
 
+    # ASCII art warning banner
+    msg ""
+    msg "╔════════════════════════════════════════════════════════════════╗"
+    msg "║                                                                ║"
+    msg "║                    ⚠️  BACKUP IN PROGRESS  ⚠️                   ║"
+    msg "║                                                                ║"
+    msg "║   Your existing configuration files will be backed up before   ║"
+    msg "║   installing Omablue. This ensures you can restore your        ║"
+    msg "║   previous setup if needed.                                    ║"
+    msg "║                                                                ║"
+    msg "╚════════════════════════════════════════════════════════════════╝"
+    msg ""
+
     local backup_dir
     backup_dir="$HOME/.config-backup-omablue-$(date +%Y%m%d-%H%M%S)"
     mkdir -p "$backup_dir" || die "Failed to create backup directory: $backup_dir"
+
+    msg "Creating backup at: $backup_dir"
+    msg ""
 
     for dir in "${to_backup[@]}"; do
         cp -r "$HOME/.config/$dir" "$backup_dir/" || die "Failed to backup $dir"
         ok "backed up $dir"
     done
 
-    ok "backups saved to $backup_dir"
+    msg ""
+    msg "╔════════════════════════════════════════════════════════════════╗"
+    msg "║                                                                ║"
+    msg "║                   ✓  BACKUP COMPLETED  ✓                       ║"
+    msg "║                                                                ║"
+    msg "║   Your configuration files have been safely backed up to:      ║"
+    msg "║                                                                ║"
+    msg "║   → $backup_dir"
+    msg "║                                                                ║"
+    msg "╚════════════════════════════════════════════════════════════════╝"
     msg ""
 }
 
