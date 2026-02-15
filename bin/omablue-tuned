@@ -1,0 +1,66 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# --- Omablue: Tuned Power Profile Switcher ---
+# Rofi menu to switch between tuned power profiles
+
+for cmd in rofi notify-send tuned-adm; do
+  if ! command -v "$cmd" &>/dev/null; then
+    notify-send -u critical "Error" "$cmd is required." 2>/dev/null
+    exit 1
+  fi
+done
+
+# Check if tuned service is running
+if ! systemctl is-active --quiet tuned; then
+  notify-send -u critical "Tuned" "tuned service is not running.\nStart it with: run0 systemctl enable --now tuned"
+  exit 1
+fi
+
+# Profile mapping: display name -> tuned profile
+declare -A PROFILES=(
+  ["Balance"]="balanced-battery"
+  ["Powersave"]="powersave"
+  ["Performance"]="throughput-performance"
+)
+
+# Icons for each profile
+declare -A ICONS=(
+  ["Balance"]="󰈐"
+  ["Powersave"]="󰌪"
+  ["Performance"]="󱐋"
+)
+
+# Get current active profile
+CURRENT=$(tuned-adm active 2>/dev/null | sed 's/.*: //')
+
+# Build menu entries, marking the active profile with *
+OPTIONS=""
+for name in Balance Powersave Performance; do
+  if [[ "${PROFILES[$name]}" == "$CURRENT" ]]; then
+    OPTIONS+="${ICONS[$name]} ${name} *\n"
+  else
+    OPTIONS+="${ICONS[$name]} ${name}\n"
+  fi
+done
+
+# Show rofi menu
+CHOSEN=$(echo -e "$OPTIONS" | rofi -dmenu -i -p "Power Profile" -theme my_theme.rasi) || exit 0
+
+# Extract the profile name (strip icon and asterisk)
+for name in Balance Powersave Performance; do
+  if [[ "${CHOSEN,,}" == *"${name,,}"* ]]; then
+    TARGET="${PROFILES[$name]}"
+    if [[ "$TARGET" == "$CURRENT" ]]; then
+      notify-send -a "Omablue" "Power Profile" "Already on $name ($TARGET)"
+      exit 0
+    fi
+    if run0 tuned-adm profile "$TARGET" 2>/dev/null; then
+      notify-send -a "Omablue" "Power Profile" "Switched to $name ($TARGET)"
+    else
+      notify-send -u critical "Power Profile" "Failed to switch to $name"
+      exit 1
+    fi
+    exit 0
+  fi
+done
