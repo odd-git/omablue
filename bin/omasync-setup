@@ -22,10 +22,12 @@ T="-theme my_theme.rasi"
 menu()  { printf '%s\n' "$@" | rofi -dmenu -i -p "${TITLE:-Menu}" $T || true; }
 input() {
   local label="$1" default="${2:-}" description="${3:-}"
-  # Show label as message (prominent) + prompt, with description as help
-  local msg="$label"
-  [[ -n "$description" ]] && msg="$label: $description"
-  printf '%s\n' "$default" | rofi -dmenu -p "Enter value:" -mesg "$msg" -filter "$default" $T || true
+  # Show instructions as notification popup first
+  if [[ -n "$description" ]]; then
+    notify-send -a "omasync" -t 5000 "$label" "$description" 2>/dev/null || true
+  fi
+  # Then show rofi input with clear prompt
+  printf '%s\n' "$default" | rofi -dmenu -p "$label:" -filter "$default" $T || true
 }
 ask()   { [[ "$(printf 'Yes\nNo\n' | rofi -dmenu -p "$1" $T || true)" == "Yes" ]]; }
 note()  { notify-send -a "omasync" "$1" "${2:-}"; }
