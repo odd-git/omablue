@@ -20,12 +20,20 @@ source "$OMABIN/omasync-lib.sh"
 T="-theme my_theme.rasi"
 
 menu()  { printf '%s\n' "$@" | rofi -dmenu -i -p "${TITLE:-Menu}" $T || true; }
-input() { local p="$1" d="${2:-}"; printf '%s\n' "$d" | rofi -dmenu -p "$p" -filter "$d" $T || true; }
+input() {
+  local prompt="$1" default="${2:-}" help="${3:-}"
+  if [[ -n "$help" ]]; then
+    printf '%s\n' "$default" | rofi -dmenu -p "$prompt" -filter "$default" -mesg "$help" $T || true
+  else
+    printf '%s\n' "$default" | rofi -dmenu -p "$prompt" -filter "$default" $T || true
+  fi
+}
 ask()   { [[ "$(printf 'Yes\nNo\n' | rofi -dmenu -p "$1" $T || true)" == "Yes" ]]; }
 note()  { notify-send -a "omasync" "$1" "${2:-}"; }
 err()   { notify-send -a "omasync" -u critical "$1" "${2:-}"; }
 
 slug()  { echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-_'; }
+clean_hostname() { echo "$1" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9.-'; }
 
 # ── DEVICES ────────────────────────────────────────────────────────────────────
 
@@ -80,15 +88,15 @@ discover_and_add_device() {
   IFS='|' read -r source hostname ip os ts <<< "${entries[$idx]}"
 
   local name user port dtype host_for_config
-  # For LAN devices, use IP directly; for Tailscale, use hostname (resolve_host handles it)
+  # For LAN devices, use IP directly; for Tailscale, sanitize hostname to remove invalid chars
   host_for_config="$ip"
-  [[ "$source" == "TS" ]] && host_for_config="$hostname"
+  [[ "$source" == "TS" ]] && host_for_config="$(clean_hostname "$hostname")"
 
-  name=$(input "Device name (e.g., pixel9, thinkpad):" "$hostname") || return 0
+  name=$(input "Device name" "$hostname" "Short name for this device (e.g. pixel9, thinkpad)") || return 0
   [[ -z "$name" ]] && return 0
   id=$(slug "$name")
 
-  user=$(input "SSH username (e.g., root, u0_a276):") || return 0
+  user=$(input "SSH username" "" "User account on the remote device (e.g. root for Linux, u0_a276 for Termux)") || return 0
   [[ -z "$user" ]] && return 0
 
   if [[ "$source" == "LAN" ]]; then
@@ -97,17 +105,17 @@ discover_and_add_device() {
     while IFS=$'\t' read -r p_ip p_port; do
       if [[ "$p_ip" == "$ip" ]]; then probe_port=$p_port; break; fi
     done < <(scan_lan_hosts 2>/dev/null)
-    port=$(input "SSH port (usually 22 or 8022 for Termux):" "$probe_port") || return 0
+    port=$(input "SSH port" "$probe_port" "Port number where SSH runs (22 for Linux/macOS, 8022 for Termux)") || return 0
     [[ -z "$port" ]] && port=22
     ts="false"
   else
     # Tailscale - default to 22, allow override
-    port=$(input "SSH port (usually 22):" "22") || return 0
+    port=$(input "SSH port" "22" "Port number where SSH runs (usually 22)") || return 0
     [[ -z "$port" ]] && port=22
     ts="true"
   fi
 
-  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type (linux/termux/macos):" $T) || return 0
+  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type" -mesg "What OS is this device running?" $T) || return 0
   [[ -z "$dtype" ]] && return 0
 
   key="$SSH_DIR/omasync_${id}"
@@ -167,23 +175,23 @@ EOF
 manual_add_device() {
   local name host port user dtype ts key
 
-  name=$(input "Device name (e.g., pixel9, thinkpad):" "") || return 0
+  name=$(input "Device name" "" "Short name for this device (e.g. pixel9, thinkpad)") || return 0
   [[ -z "$name" ]] && return 0
   local id; id=$(slug "$name")
 
-  host=$(input "Host or IP (e.g., 192.168.1.50 or hostname):" "") || return 0
+  host=$(input "Host or IP" "" "IP address (192.168.1.50) or hostname (for Tailscale, use the device hostname)") || return 0
   [[ -z "$host" ]] && return 0
 
-  port=$(input "SSH port (usually 22 or 8022 for Termux):" "22") || return 0
+  port=$(input "SSH port" "22" "Port number where SSH runs (22 for Linux/macOS, 8022 for Termux)") || return 0
   [[ -z "$port" ]] && port=22
 
-  user=$(input "SSH username (e.g., root, u0_a276):" "") || return 0
+  user=$(input "SSH username" "" "User account on the remote device (e.g. root for Linux, u0_a276 for Termux)") || return 0
   [[ -z "$user" ]] && return 0
 
-  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type (linux/termux/macos):" $T) || return 0
+  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type" -mesg "What OS is this device running?" $T) || return 0
   [[ -z "$dtype" ]] && return 0
 
-  ts=false; ask "Use Tailscale for this device (only if device is on Tailscale network)?" && ts=true || true
+  ts=false; ask "Use Tailscale for this device? (only if device is on your Tailscale network)" && ts=true || true
 
   key="$SSH_DIR/omasync_${id}"
   if [[ ! -f "$key" ]]; then
@@ -244,11 +252,11 @@ add_device_profile() {
 
   local name lpath rpath dir excl del
 
-  name=$(input "Profile name (e.g. music, documents, vault):" "") || return 0
+  name=$(input "Profile name" "" "What to call this sync profile (e.g. music, documents, vault)") || return 0
   [[ -z "$name" ]] && return 0
   local id; id="${device_id}-$(slug "$name")"
 
-  lpath=$(input "Local path (e.g. ~/Music, ~/Documents):" "$HOME/") || return 0
+  lpath=$(input "Local path" "$HOME/" "Folder on THIS computer (e.g. ~/Music, ~/Documents, ~/Vault)") || return 0
   [[ -z "$lpath" ]] && return 0
   lpath="${lpath/#\~/$HOME}"
 
@@ -257,15 +265,15 @@ add_device_profile() {
     termux) default_rpath="/storage/shared/" ;;
     *)      default_rpath="$HOME/" ;;
   esac
-  rpath=$(input "Remote path (e.g. /storage/shared, /home/user):" "$default_rpath") || return 0
+  rpath=$(input "Remote path" "$default_rpath" "Folder on REMOTE device (where files sync to/from)") || return 0
   [[ -z "$rpath" ]] && return 0
 
-  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Sync direction (push/pull/both):" $T) || return 0
+  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Sync direction" -mesg "push=upload to device, pull=download from device, both=bidirectional" $T) || return 0
   [[ -z "$dir" ]] && return 0
 
-  excl=$(input "Exclude patterns — comma-separated, optional (e.g. *.tmp, .cache):" "") || true
+  excl=$(input "Exclude patterns" "" "Patterns to skip (comma-separated, optional — e.g. *.tmp, .cache, .git)") || true
 
-  del=false; ask "Enable --delete? (removes files on destination not in source)" && del=true || true
+  del=false; ask "Enable --delete? (removes files on destination that don't exist in source)" && del=true || true
 
   cat > "$CFG/profiles/${id}.conf" <<EOF
 PROFILE_NAME="$name"
