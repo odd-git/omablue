@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-for cmd in gum rofi notify-send ssh rsync; do
+for cmd in rofi notify-send ssh rsync; do
   command -v "$cmd" &>/dev/null || { notify-send -u critical "omasync-setup" "$cmd not found"; exit 1; }
 done
 
@@ -22,13 +22,12 @@ T="-theme my_theme.rasi"
 menu()  { printf '%s\n' "$@" | rofi -dmenu -i -p "${TITLE:-Menu}" $T || true; }
 input() {
   local label="$1" default="${2:-}" description="${3:-}"
-  if [[ -n "$description" ]]; then
-    gum input --placeholder "$default" --prompt "$label: " --header "$description" 2>/dev/null || echo "$default"
-  else
-    gum input --placeholder "$default" --prompt "$label: " 2>/dev/null || echo "$default"
-  fi
+  # Format: "Label: description (example)"
+  local prompt="$label"
+  [[ -n "$description" ]] && prompt="$label | $description"
+  printf '%s\n' "$default" | rofi -dmenu -p "$prompt" -filter "$default" $T || true
 }
-ask()   { gum confirm "$1" 2>/dev/null || false; }
+ask()   { [[ "$(printf 'Yes\nNo\n' | rofi -dmenu -p "$1" $T || true)" == "Yes" ]]; }
 note()  { notify-send -a "omasync" "$1" "${2:-}"; }
 err()   { notify-send -a "omasync" -u critical "$1" "${2:-}"; }
 
