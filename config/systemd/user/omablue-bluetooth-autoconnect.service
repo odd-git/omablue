@@ -1,0 +1,38 @@
+[Unit]
+Description=Omablue Bluetooth Auto-Connect
+Documentation=https://github.com/odd-git/omablue
+After=bluetooth.target
+Wants=bluetooth.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/omablue/bin/omablue-bluetooth-autoconnect
+StandardOutput=journal
+StandardError=journal
+TimeoutStartSec=120
+
+# Security hardening (Secureblue standard)
+PrivateTmp=true
+NoNewPrivileges=true
+ProtectSystem=strict
+ProtectHome=read-only
+ReadWritePaths=%t
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+RestrictNamespaces=true
+RestrictRealtime=true
+RestrictSUIDSGID=true
+MemoryDenyWriteExecute=true
+CapabilityBoundingSet=
+SystemCallFilter=@system-service
+SystemCallErrorNumber=EPERM
+IPAddressDeny=any
+RestrictAddressFamilies=AF_BLUETOOTH AF_UNIX
+
+# Resource limits
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

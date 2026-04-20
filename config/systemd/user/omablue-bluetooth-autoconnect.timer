@@ -1,0 +1,16 @@
+[Unit]
+Description=Omablue Bluetooth Auto-Connect Timer
+Documentation=https://github.com/odd-git/omablue
+After=bluetooth.target
+Wants=bluetooth.target
+
+[Timer]
+# Start 30 seconds after boot/login
+OnBootSec=30s
+# Run every 90 seconds after the previous run completes
+OnUnitActiveSec=90s
+# If the system was off when a timer should have run, don't catch up
+Persistent=false
+
+[Install]
+WantedBy=timers.target

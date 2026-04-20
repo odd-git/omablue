@@ -65,11 +65,10 @@ run_tui() {
 
 show_install_menu() {
   local choice
-  choice=$(menu "Install" "󰖟 Webapp" " Brew" " Ujust" "󰆍 Tui" " Flatpak")
+  choice=$(menu "Install" "󰖟 Webapp" " Brew" "󰆍 Tui" " Flatpak")
   case "${choice,,}" in
   *webapp*) run_tui "$OMABIN/omablue-webapp-install" ;;
   *brew*) run_tui "$OMABIN/omablue-brew-install" ;;
-  *ujust*) run_tui "$OMABIN/omablue-install-ujust" ;;
   *tui*) run_tui "$OMABIN/omablue-tui-install" ;;
   *flatpak*) run_tui "$OMABIN/omablue-flatpak-install" ;;
   *) back_to ;;
@@ -78,7 +77,7 @@ show_install_menu() {
 
 show_remove_menu() {
   local choice
-  choice=$(menu "Remove" "󰖟 Webapp" " Brew" "󰆍 Tui" " Flatpak")
+  choice=$(menu "Remove" "󰖟 Webapp" " Brew" "󰆍 Tui" " Flatpak")
   case "${choice,,}" in
   *webapp*) run_tui "$OMABIN/omablue-webapp-remove" ;;
   *brew*) run_tui "$OMABIN/omablue-brew-remove" ;;
@@ -90,19 +89,22 @@ show_remove_menu() {
 
 show_setup_menu() {
   local choice
-  choice=$(menu "Setup" "󱓞 Theme" "󰂯 Bluetooth" "󰓃 Mixer" "󰖩 Network")
+  choice=$(menu "Setup" "󱓞 Theme" "󰂯 Bluetooth" "󰓃 Mixer" "󰖩 Network" "󰒍 Sync Setup" " Ujust" " Sync")
   case "${choice,,}" in
   *theme*) run_tui "$OMABIN/omablue-theme-selector" ;;
   *bluetooth*) run_tui "$OMABIN/omablue-bluetooth" ;;
   *mixer*) run_tui "$OMABIN/omablue-mixer" ;;
   *network*) run_tui "$OMABIN/omablue-nmcli" ;;
+  *sync\ setup*) run_tui "$OMABIN/omasync-setup" ;;
+  *ujust*) run_tui "$OMABIN/omablue-install-ujust" ;;
+  *sync*) run_tui "$OMABIN/omasync" ;;
   *) back_to ;;
   esac
 }
 
 show_system_menu() {
   local choice
-  choice=$(menu "System" " Lock" "󰜉 Restart" "󰐥 Shutdown")
+  choice=$(menu "System" " Lock" "󰜉 Restart" "󰐥 Shutdown")
   case "${choice,,}" in
   *lock*) swaylock ;;
   *restart*)
@@ -122,7 +124,7 @@ show_system_menu() {
 
 show_main_menu() {
   local choice
-  choice=$(menu "Go" "󰀻 Apps" "󰐕 Install" "󰛌 Remove" " Setup" " System")
+  choice=$(menu "Go" "󰀻 Apps" "󰐕 Install" "󰛌 Remove" " Setup" " System")
   case "${choice,,}" in
   *apps*) rofi -show drun -no-show-icons -theme my_theme.rasi ;;
   *install*) show_install_menu ;;

@@ -239,13 +239,21 @@ get_local_subnet() {
 
 scan_lan_hosts() {
   local -a ips
-  mapfile -t ips < <(ip neigh show 2>/dev/null | awk '/REACHABLE|STALE/ {print $1}' | grep -v '^$')
+  # Get IPv4 addresses only from ARP table (both REACHABLE and STALE)
+  mapfile -t ips < <(ip neigh show 2>/dev/null | \
+    grep -E 'REACHABLE|STALE' | \
+    awk '{print $1}' | \
+    grep -E '^([0-9]{1,3}\.){3}[0-9]{1,3}$' | \
+    sort -u)
+
+  [[ ${#ips[@]} -eq 0 ]] && return 0
+
   for ip in "${ips[@]}"; do
     for port in 22 8022; do
-      if (bash -c "echo > /dev/tcp/${ip}/${port}" 2>/dev/null); then
+      timeout 1 bash -c "echo > /dev/tcp/${ip}/${port}" 2>/dev/null && {
         printf '%s\t%s\n' "$ip" "$port"
         break
-      fi
+      }
     done
   done
 }

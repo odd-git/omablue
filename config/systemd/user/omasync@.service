@@ -1,0 +1,16 @@
+[Unit]
+Description=Omasync Sync — %i
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=%h/.local/share/omablue/bin/omasync --device %i --profile %i --yes
+StandardOutput=journal
+StandardError=journal
+
+Nice=19
+IOSchedulingClass=idle
+
+[Install]
+WantedBy=default.target

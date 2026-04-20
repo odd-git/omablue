@@ -22,12 +22,12 @@ T="-theme my_theme.rasi"
 menu()  { printf '%s\n' "$@" | rofi -dmenu -i -p "${TITLE:-Menu}" $T || true; }
 input() {
   local label="$1" default="${2:-}" description="${3:-}"
-  # Show instructions as notification popup first
+  # Show instructions directly in rofi message bar
   if [[ -n "$description" ]]; then
-    notify-send -a "omasync" -t 5000 "$label" "$description" 2>/dev/null || true
+    printf '%s\n' "$default" | rofi -dmenu -p "$label:" -filter "$default" -mesg "$description" $T || true
+  else
+    printf '%s\n' "$default" | rofi -dmenu -p "$label:" -filter "$default" $T || true
   fi
-  # Then show rofi input with clear prompt
-  printf '%s\n' "$default" | rofi -dmenu -p "$label:" -filter "$default" $T || true
 }
 ask()   { [[ "$(printf 'Yes\nNo\n' | rofi -dmenu -p "$1" $T || true)" == "Yes" ]]; }
 note()  { notify-send -a "omasync" "$1" "${2:-}"; }
@@ -35,6 +35,21 @@ err()   { notify-send -a "omasync" -u critical "$1" "${2:-}"; }
 
 slug()  { echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-_'; }
 clean_hostname() { echo "$1" | tr -d ' ' | tr '[:upper:]' '[:lower:]' | tr -cd 'a-z0-9.-'; }
+
+deploy_ssh_key_interactive() {
+  local key="$1" user="$2" host="$3" port="$4" device_name="$5"
+  local TERMINAL="foot"
+  local TUI_CLASS="omablue-floating"
+
+  nohup "$TERMINAL" \
+    --app-id="$TUI_CLASS" \
+    --title="Deploy SSH Key to $device_name" \
+    /bin/bash -l -c "ssh-copy-id -i '$key.pub' -p '$port' '$user@$host' && sleep 2 && echo 'Key deployed successfully!' && read -rp 'Press Enter to close...' || { echo 'Key deployment failed.'; read -rp 'Press Enter to close...'; }" \
+    >/dev/null 2>&1 &
+
+  sleep 1
+  note "Deploying SSH key" "Enter your password when prompted"
+}
 
 # ── DEVICES ────────────────────────────────────────────────────────────────────
 
@@ -131,10 +146,8 @@ discover_and_add_device() {
   local pub; pub=$(<"${key}.pub")
   command -v wl-copy &>/dev/null && printf '%s' "$pub" | wl-copy || true
 
-  local key_installed=false
-  if check_ssh_key_installed "$key" "$user" "$ip" "$port"; then
-    key_installed=true
-    note "SSH key installed" "Key is already authorized on remote"
+  if ask "Deploy SSH key to $name now?"; then
+    deploy_ssh_key_interactive "$key" "$user" "$ip" "$port" "$name"
   else
     local guide
     case "$dtype" in
@@ -163,6 +176,10 @@ EOF
     else
       err "Connection failed" "Check: device online? sshd running? key installed?"
     fi
+  fi
+
+  if ask "Deploy SSH key to $name now?"; then
+    deploy_ssh_key_interactive "$key" "$user" "$ip" "$port" "$name"
   fi
 
   if ask "Add sync profiles for $name now?"; then
@@ -203,8 +220,8 @@ manual_add_device() {
   local pub; pub=$(<"${key}.pub")
   command -v wl-copy &>/dev/null && printf '%s' "$pub" | wl-copy || true
 
-  if check_ssh_key_installed "$key" "$user" "$host" "$port"; then
-    note "SSH key installed" "Key is already authorized on remote"
+  if ask "Deploy SSH key to $name now?"; then
+    deploy_ssh_key_interactive "$key" "$user" "$host" "$port" "$name"
   else
     local guide
     case "$dtype" in
@@ -233,6 +250,10 @@ EOF
     else
       err "Connection failed" "Check: device online? sshd running? correct port/user?"
     fi
+  fi
+
+  if ask "Deploy SSH key to $name now?"; then
+    deploy_ssh_key_interactive "$key" "$user" "$host" "$port" "$name"
   fi
 
   if ask "Add sync profiles for $name now?"; then
@@ -288,22 +309,6 @@ EOF
   note "Profile saved" "$name  [$dir]  $lpath ↔ $rpath"
 }
 
-edit_device() {
-  local -a ids=(); for f in "$CFG/devices/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
-  [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
-  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Edit device:" $T) || return 0
-  [[ -z "$id" ]] && return 0
-  local DEVICE_HOST DEVICE_PORT DEVICE_USER DEVICE_KEY DEVICE_TYPE DEVICE_TAILSCALE DEVICE_NAME
-  # shellcheck disable=SC1090
-  source "$CFG/devices/${id}.conf"
-  local h u p
-  h=$(input "Host or IP:" "$DEVICE_HOST"); [[ -z "$h" ]] && h="$DEVICE_HOST"
-  p=$(input "SSH port:" "$DEVICE_PORT");   [[ -z "$p" ]] && p="$DEVICE_PORT"
-  u=$(input "SSH username:" "$DEVICE_USER"); [[ -z "$u" ]] && u="$DEVICE_USER"
-  sed -i "s|DEVICE_HOST=.*|DEVICE_HOST=\"$h\"|; s|DEVICE_PORT=.*|DEVICE_PORT=\"$p\"|; s|DEVICE_USER=.*|DEVICE_USER=\"$u\"|" "$CFG/devices/${id}.conf"
-  note "Device updated" "$DEVICE_NAME"
-}
-
 remove_device() {
   local -a ids=(); for f in "$CFG/devices/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
   [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Nothing to remove."; return 0; }
@@ -313,6 +318,13 @@ remove_device() {
   # shellcheck disable=SC1090
   source "$CFG/devices/${id}.conf"
   ask "Remove '$DEVICE_NAME'? Cannot be undone." || return 0
+
+  local -a prf_files
+  mapfile -t prf_files < <(ls "$CFG/profiles/${id}-"*.conf 2>/dev/null) || true
+  if [[ ${#prf_files[@]} -gt 0 ]] && ask "Also remove ${#prf_files[@]} sync profile(s) for $DEVICE_NAME?"; then
+    rm -f "${prf_files[@]}"
+  fi
+
   rm -f "$CFG/devices/${id}.conf"
   if [[ -f "${DEVICE_KEY:-}" ]] && ask "Also delete SSH key for $DEVICE_NAME?"; then
     rm -f "$DEVICE_KEY" "${DEVICE_KEY}.pub"
@@ -320,25 +332,241 @@ remove_device() {
   note "Device removed" "$DEVICE_NAME"
 }
 
-list_devices() {
-  local -a lines=()
-  for f in "$CFG/devices/"*.conf; do
-    [[ -f "$f" ]] || continue
-    local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_TYPE
-    # shellcheck disable=SC1090
-    source "$f"
-    lines+=("$DEVICE_NAME  [$DEVICE_TYPE]  $DEVICE_HOST:$DEVICE_PORT")
-  done
-  [[ ${#lines[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
-  printf '%s\n' "${lines[@]}" | rofi -dmenu -p "Devices:" $T || true
+
+# ── CONN TEST ──────────────────────────────────────────────────────────────────
+
+test_conn() {
+  local -a ids=(); for f in "$CFG/devices/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
+  [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
+  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Test connection:" $T) || return 0
+  [[ -z "$id" ]] && return 0
+  test_conn_device "$id"
 }
 
-# ── PROFILES ───────────────────────────────────────────────────────────────────
+test_conn_device() {
+  local id="$1"
+  local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_USER DEVICE_KEY DEVICE_TYPE DEVICE_TAILSCALE
+  # shellcheck disable=SC1090
+  source "$CFG/devices/${id}.conf"
+  local opts=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$DEVICE_PORT")
+  [[ -f "${DEVICE_KEY:-}" ]] && opts+=(-i "$DEVICE_KEY")
+  if ssh "${opts[@]}" "${DEVICE_USER}@${DEVICE_HOST}" exit 2>/dev/null; then
+    note "Connection OK" "$DEVICE_NAME ($DEVICE_HOST:$DEVICE_PORT)"
+  else
+    err "Connection failed" "$DEVICE_NAME — device online? sshd running?"
+  fi
+}
 
-add_profile() {
+deploy_ssh_key_to_device() {
+  local id="$1"
+  local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_USER DEVICE_KEY
+  # shellcheck disable=SC1090
+  source "$CFG/devices/${id}.conf"
+  deploy_ssh_key_interactive "$DEVICE_KEY" "$DEVICE_USER" "$DEVICE_HOST" "$DEVICE_PORT" "$DEVICE_NAME"
+}
+
+# ── DEVICE MANAGEMENT (device-centric menu) ────────────────────────────────────
+
+manage_device() {
+  local -a ids=()
+  for f in "$CFG/devices/"*.conf; do
+    [[ -f "$f" ]] || continue
+    ids+=("$(basename "$f" .conf)")
+  done
+  [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
+
+  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p " Select device:" $T) || return 0
+  [[ -z "$id" ]] && return 0
+  device_menu "$id"
+}
+
+device_menu() {
+  local device_id="$1"
+  local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_USER DEVICE_KEY DEVICE_TYPE
+  # shellcheck disable=SC1090
+  source "$CFG/devices/${device_id}.conf"
+
+  while true; do
+    local -a prf_files
+    mapfile -t prf_files < <(ls "$CFG/profiles/${device_id}-"*.conf 2>/dev/null) || true
+
+    local sync_count=${#prf_files[@]}
+    local header="$DEVICE_NAME  ($DEVICE_HOST)  [$sync_count syncs]"
+
+    TITLE="$header"
+    local choice; choice=$(menu \
+      " View Syncs" \
+      " Add Sync" \
+      "  Edit Sync" \
+      "  Remove Sync" \
+      "  Edit Device" \
+      "󰗠 Test Connection" \
+      " Deploy SSH Key" \
+      "󰌾 Back") || return 0
+
+    case "$choice" in
+      *"View Syncs"*)      view_device_syncs "$device_id" ;;
+      *"Add Sync"*)        add_device_profile "$device_id" ;;
+      *"Edit Sync"*)       edit_device_sync "$device_id" ;;
+      *"Remove Sync"*)     remove_device_sync "$device_id" ;;
+      *"Edit Device"*)     edit_device_config "$device_id" ;;
+      *"Test Connection"*) test_conn_device "$device_id" ;;
+      *"Deploy SSH Key"*)  deploy_ssh_key_to_device "$device_id" ;;
+      *"Back"*)            return 0 ;;
+      "")                  return 0 ;;
+    esac
+  done
+}
+
+view_device_syncs() {
+  local device_id="$1"
+  local DEVICE_NAME
+  [[ -f "$CFG/devices/${device_id}.conf" ]] && source "$CFG/devices/${device_id}.conf" 2>/dev/null || true
+
+  local -a lines=()
+  for f in "$CFG/profiles/${device_id}-"*.conf; do
+    [[ -f "$f" ]] || continue
+    local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
+    # shellcheck disable=SC1090
+    source "$f"
+    lines+=(" $PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH ↔ $REMOTE_PATH")
+  done
+
+  if [[ ${#lines[@]} -eq 0 ]]; then
+    err "No syncs" "Use Add Sync to create one."
+    return 0
+  fi
+
+  printf '%s\n' "${lines[@]}" | rofi -dmenu -p " Syncs for $DEVICE_NAME:" -mesg "View syncs (read-only)" $T || true
+}
+
+edit_device_sync() {
+  local device_id="$1"
+  local -a prf_files
+  mapfile -t prf_files < <(ls "$CFG/profiles/${device_id}-"*.conf 2>/dev/null) || true
+  [[ ${#prf_files[@]} -eq 0 ]] && { err "No syncs" "Add a sync first."; return 0; }
+
+  local -a ids=(); local -a labels=()
+  for f in "${prf_files[@]}"; do
+    local PROFILE_NAME LOCAL_PATH DIRECTION
+    # shellcheck disable=SC1090
+    source "$f"
+    ids+=("$f")
+    labels+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH")
+  done
+
+  local selected; selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "  Edit sync:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local conf_file=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && conf_file="${ids[$i]}" && break
+  done
+  [[ -z "$conf_file" ]] && return 0
+
+  local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
+  # shellcheck disable=SC1090
+  source "$conf_file"
+
+  local l r d
+  l=$(input "Local path:" "$LOCAL_PATH")
+  [[ -z "$l" ]] && l="$LOCAL_PATH"
+  r=$(input "Remote path:" "$REMOTE_PATH")
+  [[ -z "$r" ]] && r="$REMOTE_PATH"
+  d=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction:" -filter "$DIRECTION" $T) || return 0
+  [[ -z "$d" ]] && d="$DIRECTION"
+
+  sed -i "s|LOCAL_PATH=.*|LOCAL_PATH=\"$l\"|; s|REMOTE_PATH=.*|REMOTE_PATH=\"$r\"|; s|DIRECTION=.*|DIRECTION=\"$d\"|" "$conf_file"
+  note "Sync updated" "$PROFILE_NAME"
+}
+
+remove_device_sync() {
+  local device_id="$1"
+  local -a prf_files
+  mapfile -t prf_files < <(ls "$CFG/profiles/${device_id}-"*.conf 2>/dev/null) || true
+  [[ ${#prf_files[@]} -eq 0 ]] && { err "No syncs" "Nothing to remove."; return 0; }
+
+  local -a ids=(); local -a labels=()
+  for f in "${prf_files[@]}"; do
+    local PROFILE_NAME LOCAL_PATH DIRECTION
+    # shellcheck disable=SC1090
+    source "$f"
+    ids+=("$f")
+    labels+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH")
+  done
+
+  local selected; selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "  Remove sync:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local conf_file=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && conf_file="${ids[$i]}" && break
+  done
+  [[ -z "$conf_file" ]] && return 0
+
+  local PROFILE_NAME
+  # shellcheck disable=SC1090
+  source "$conf_file"
+  ask "Remove sync '$PROFILE_NAME'?" || return 0
+  rm -f "$conf_file"
+  note "Sync removed" "$PROFILE_NAME"
+}
+
+edit_device_config() {
+  local device_id="$1"
+  local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_USER
+  # shellcheck disable=SC1090
+  source "$CFG/devices/${device_id}.conf"
+
+  local h u p
+  h=$(input "Host or IP:" "$DEVICE_HOST")
+  [[ -z "$h" ]] && h="$DEVICE_HOST"
+  p=$(input "SSH port:" "$DEVICE_PORT")
+  [[ -z "$p" ]] && p="$DEVICE_PORT"
+  u=$(input "SSH username:" "$DEVICE_USER")
+  [[ -z "$u" ]] && u="$DEVICE_USER"
+
+  sed -i "s|DEVICE_HOST=.*|DEVICE_HOST=\"$h\"|; s|DEVICE_PORT=.*|DEVICE_PORT=\"$p\"|; s|DEVICE_USER=.*|DEVICE_USER=\"$u\"|" "$CFG/devices/${device_id}.conf"
+  note "Device updated" "$DEVICE_NAME"
+}
+
+# ── SHARED PROFILES (global profiles without device scope) ─────────────────────
+
+get_shared_profile_files() {
+  for f in "$CFG/profiles/"*.conf; do
+    [[ -f "$f" ]] || continue
+    local DEVICE_ID=""
+    # shellcheck disable=SC1090
+    source "$f" 2>/dev/null || continue
+    [[ -z "$DEVICE_ID" ]] && echo "$f"
+  done
+}
+
+shared_profiles_menu() {
+  while true; do
+    TITLE="Shared Profiles"
+    local choice; choice=$(menu \
+      " Add Shared Profile" \
+      "  Edit Shared Profile" \
+      "  Remove Shared Profile" \
+      " List Shared Profiles" \
+      "󰌾 Back") || return 0
+
+    case "$choice" in
+      *"Add Shared"*)    add_shared_profile ;;
+      *"Edit Shared"*)   edit_shared_profile ;;
+      *"Remove Shared"*) remove_shared_profile ;;
+      *"List Shared"*)   list_shared_profiles ;;
+      *"Back"*)          return 0 ;;
+      "")                return 0 ;;
+    esac
+  done
+}
+
+add_shared_profile() {
   local name lpath rpath dir excl del
 
-  name=$(input "Profile name (e.g. notes, keepass):") || return 0
+  name=$(input "Profile name (e.g. notes, keepass):" "") || return 0
   [[ -z "$name" ]] && return 0
   local id; id=$(slug "$name")
 
@@ -352,7 +580,7 @@ add_profile() {
   dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction:" $T) || return 0
   [[ -z "$dir" ]] && return 0
 
-  excl=$(input "Exclude patterns (comma-sep, optional):") || true
+  excl=$(input "Exclude patterns (comma-sep, optional):" "") || true
 
   del=false; ask "Enable --delete? (removes files on dest not in source)" && del=true || true
 
@@ -367,66 +595,87 @@ EOF
   note "Profile saved" "$name  [$dir]  $lpath ↔ $rpath"
 }
 
-edit_profile() {
-  local -a ids=(); for f in "$CFG/profiles/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
-  [[ ${#ids[@]} -eq 0 ]] && { err "No profiles" "Add a profile first."; return 0; }
-  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Edit profile:" $T) || return 0
-  [[ -z "$id" ]] && return 0
-  local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION RSYNC_EXCLUDE RSYNC_DELETE
+edit_shared_profile() {
+  local -a files; mapfile -t files < <(get_shared_profile_files)
+  [[ ${#files[@]} -eq 0 ]] && { err "No shared profiles" "Add one first."; return 0; }
+
+  local -a ids=(); local -a labels=()
+  for f in "${files[@]}"; do
+    local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
+    # shellcheck disable=SC1090
+    source "$f"
+    ids+=("$f")
+    labels+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH → $REMOTE_PATH")
+  done
+
+  local selected; selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "  Edit shared profile:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local conf_file=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && conf_file="${ids[$i]}" && break
+  done
+  [[ -z "$conf_file" ]] && return 0
+
+  local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
   # shellcheck disable=SC1090
-  source "$CFG/profiles/${id}.conf"
+  source "$conf_file"
+
   local l r d
-  l=$(input "Local path:" "$LOCAL_PATH");   [[ -z "$l" ]] && l="$LOCAL_PATH"
-  r=$(input "Remote path:" "$REMOTE_PATH"); [[ -z "$r" ]] && r="$REMOTE_PATH"
+  l=$(input "Local path:" "$LOCAL_PATH")
+  [[ -z "$l" ]] && l="$LOCAL_PATH"
+  r=$(input "Remote path:" "$REMOTE_PATH")
+  [[ -z "$r" ]] && r="$REMOTE_PATH"
   d=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction:" -filter "$DIRECTION" $T) || return 0
   [[ -z "$d" ]] && d="$DIRECTION"
-  sed -i "s|LOCAL_PATH=.*|LOCAL_PATH=\"$l\"|; s|REMOTE_PATH=.*|REMOTE_PATH=\"$r\"|; s|DIRECTION=.*|DIRECTION=\"$d\"|" "$CFG/profiles/${id}.conf"
+
+  sed -i "s|LOCAL_PATH=.*|LOCAL_PATH=\"$l\"|; s|REMOTE_PATH=.*|REMOTE_PATH=\"$r\"|; s|DIRECTION=.*|DIRECTION=\"$d\"|" "$conf_file"
   note "Profile updated" "$PROFILE_NAME"
 }
 
-remove_profile() {
-  local -a ids=(); for f in "$CFG/profiles/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
-  [[ ${#ids[@]} -eq 0 ]] && { err "No profiles" "Nothing to remove."; return 0; }
-  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Remove profile:" $T) || return 0
-  [[ -z "$id" ]] && return 0
+remove_shared_profile() {
+  local -a files; mapfile -t files < <(get_shared_profile_files)
+  [[ ${#files[@]} -eq 0 ]] && { err "No shared profiles" "Nothing to remove."; return 0; }
+
+  local -a ids=(); local -a labels=()
+  for f in "${files[@]}"; do
+    local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
+    # shellcheck disable=SC1090
+    source "$f"
+    ids+=("$f")
+    labels+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH → $REMOTE_PATH")
+  done
+
+  local selected; selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "  Remove shared profile:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local conf_file=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && conf_file="${ids[$i]}" && break
+  done
+  [[ -z "$conf_file" ]] && return 0
+
   local PROFILE_NAME
   # shellcheck disable=SC1090
-  source "$CFG/profiles/${id}.conf"
-  ask "Remove profile '$PROFILE_NAME'?" || return 0
-  rm -f "$CFG/profiles/${id}.conf"
+  source "$conf_file"
+  ask "Remove shared profile '$PROFILE_NAME'?" || return 0
+  rm -f "$conf_file"
   note "Profile removed" "$PROFILE_NAME"
 }
 
-list_profiles() {
+list_shared_profiles() {
+  local -a files; mapfile -t files < <(get_shared_profile_files)
+  [[ ${#files[@]} -eq 0 ]] && { err "No shared profiles" "Add one first."; return 0; }
+
   local -a lines=()
-  for f in "$CFG/profiles/"*.conf; do
-    [[ -f "$f" ]] || continue
+  for f in "${files[@]}"; do
     local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
     # shellcheck disable=SC1090
     source "$f"
     lines+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH → $REMOTE_PATH")
   done
-  [[ ${#lines[@]} -eq 0 ]] && { err "No profiles" "Add a profile first."; return 0; }
-  printf '%s\n' "${lines[@]}" | rofi -dmenu -p "Profiles:" $T || true
-}
 
-# ── CONN TEST ──────────────────────────────────────────────────────────────────
-
-test_conn() {
-  local -a ids=(); for f in "$CFG/devices/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
-  [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
-  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Test connection:" $T) || return 0
-  [[ -z "$id" ]] && return 0
-  local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_USER DEVICE_KEY DEVICE_TYPE DEVICE_TAILSCALE
-  # shellcheck disable=SC1090
-  source "$CFG/devices/${id}.conf"
-  local opts=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$DEVICE_PORT")
-  [[ -f "${DEVICE_KEY:-}" ]] && opts+=(-i "$DEVICE_KEY")
-  if ssh "${opts[@]}" "${DEVICE_USER}@${DEVICE_HOST}" exit 2>/dev/null; then
-    note "Connection OK" "$DEVICE_NAME ($DEVICE_HOST:$DEVICE_PORT)"
-  else
-    err "Connection failed" "$DEVICE_NAME — device online? sshd running?"
-  fi
+  printf '%s\n' "${lines[@]}" | rofi -dmenu -p " Shared Profiles:" $T || true
 }
 
 # ── MAIN MENU ─────────────────────────────────────────────────────────────────
@@ -435,24 +684,14 @@ while true; do
   TITLE="Omasync Setup"
   CHOICE=$(menu \
     " Add Device" \
-    " Add Profile" \
-    "  Edit Device" \
-    "  Edit Profile" \
-    "  Remove Device" \
-    "  Remove Profile" \
-    " List Devices" \
-    " List Profiles" \
+    " Manage Device" \
+    " Shared Profiles" \
     "󰗠 Test Connection") || exit 0
 
   case "$CHOICE" in
     *"Add Device"*)      add_device ;;
-    *"Add Profile"*)     add_profile ;;
-    *"Edit Device"*)     edit_device ;;
-    *"Edit Profile"*)    edit_profile ;;
-    *"Remove Device"*)   remove_device ;;
-    *"Remove Profile"*)  remove_profile ;;
-    *"List Devices"*)    list_devices ;;
-    *"List Profiles"*)   list_profiles ;;
+    *"Manage Device"*)   manage_device ;;
+    *"Shared Profiles"*) shared_profiles_menu ;;
     *"Test Connection"*) test_conn ;;
     "") exit 0 ;;
   esac
