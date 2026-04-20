@@ -79,31 +79,35 @@ discover_and_add_device() {
   local source hostname ip os ts
   IFS='|' read -r source hostname ip os ts <<< "${entries[$idx]}"
 
-  local name user port dtype
-  name=$(input "Device name:" "$hostname") || return 0
+  local name user port dtype host_for_config
+  # For LAN devices, use IP directly; for Tailscale, use hostname (resolve_host handles it)
+  host_for_config="$ip"
+  [[ "$source" == "TS" ]] && host_for_config="$hostname"
+
+  name=$(input "Device name (e.g., pixel9, thinkpad):" "$hostname") || return 0
   [[ -z "$name" ]] && return 0
   id=$(slug "$name")
 
-  user=$(input "SSH username:") || return 0
+  user=$(input "SSH username (e.g., root, u0_a276):") || return 0
   [[ -z "$user" ]] && return 0
 
   if [[ "$source" == "LAN" ]]; then
     # For LAN, we already know the port from port probe
-    local probe_port
+    local probe_port=22
     while IFS=$'\t' read -r p_ip p_port; do
       if [[ "$p_ip" == "$ip" ]]; then probe_port=$p_port; break; fi
-    done < <(scan_lan_hosts)
-    port=$(input "SSH port:" "${probe_port:-22}") || return 0
+    done < <(scan_lan_hosts 2>/dev/null)
+    port=$(input "SSH port (usually 22 or 8022 for Termux):" "$probe_port") || return 0
     [[ -z "$port" ]] && port=22
     ts="false"
   else
     # Tailscale - default to 22, allow override
-    port=$(input "SSH port:" "22") || return 0
+    port=$(input "SSH port (usually 22):" "22") || return 0
     [[ -z "$port" ]] && port=22
     ts="true"
   fi
 
-  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type:" $T) || return 0
+  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type (linux/termux/macos):" $T) || return 0
   [[ -z "$dtype" ]] && return 0
 
   key="$SSH_DIR/omasync_${id}"
@@ -133,14 +137,14 @@ discover_and_add_device() {
 
   cat > "$CFG/devices/${id}.conf" <<EOF
 DEVICE_NAME="$name"
-DEVICE_HOST="$hostname"
+DEVICE_HOST="$host_for_config"
 DEVICE_PORT="$port"
 DEVICE_USER="$user"
 DEVICE_KEY="$key"
 DEVICE_TYPE="$dtype"
 DEVICE_TAILSCALE="$ts"
 EOF
-  note "Device saved" "$name → $hostname:$port"
+  note "Device saved" "$name → $host_for_config:$port"
 
   if ask "Test connection to $name now?"; then
     local opts=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$port")
@@ -163,23 +167,23 @@ EOF
 manual_add_device() {
   local name host port user dtype ts key
 
-  name=$(input "Device name:") || return 0
+  name=$(input "Device name (e.g., pixel9, thinkpad):" "") || return 0
   [[ -z "$name" ]] && return 0
   local id; id=$(slug "$name")
 
-  host=$(input "Host or IP:") || return 0
+  host=$(input "Host or IP (e.g., 192.168.1.50 or hostname):" "") || return 0
   [[ -z "$host" ]] && return 0
 
-  port=$(input "SSH port:" "22") || return 0
+  port=$(input "SSH port (usually 22 or 8022 for Termux):" "22") || return 0
   [[ -z "$port" ]] && port=22
 
-  user=$(input "SSH username:") || return 0
+  user=$(input "SSH username (e.g., root, u0_a276):" "") || return 0
   [[ -z "$user" ]] && return 0
 
-  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type:" $T) || return 0
+  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type (linux/termux/macos):" $T) || return 0
   [[ -z "$dtype" ]] && return 0
 
-  ts=false; ask "Use Tailscale for this device?" && ts=true || true
+  ts=false; ask "Use Tailscale for this device (only if device is on Tailscale network)?" && ts=true || true
 
   key="$SSH_DIR/omasync_${id}"
   if [[ ! -f "$key" ]]; then
@@ -240,11 +244,11 @@ add_device_profile() {
 
   local name lpath rpath dir excl del
 
-  name=$(input "Profile name (e.g. notes, keepass):") || return 0
+  name=$(input "Profile name (e.g. music, documents, vault):" "") || return 0
   [[ -z "$name" ]] && return 0
   local id; id="${device_id}-$(slug "$name")"
 
-  lpath=$(input "Local path:" "$HOME/") || return 0
+  lpath=$(input "Local path (e.g. ~/Music, ~/Documents):" "$HOME/") || return 0
   [[ -z "$lpath" ]] && return 0
   lpath="${lpath/#\~/$HOME}"
 
@@ -253,15 +257,15 @@ add_device_profile() {
     termux) default_rpath="/storage/shared/" ;;
     *)      default_rpath="$HOME/" ;;
   esac
-  rpath=$(input "Remote path:" "$default_rpath") || return 0
+  rpath=$(input "Remote path (e.g. /storage/shared, /home/user):" "$default_rpath") || return 0
   [[ -z "$rpath" ]] && return 0
 
-  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction:" $T) || return 0
+  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Sync direction (push/pull/both):" $T) || return 0
   [[ -z "$dir" ]] && return 0
 
-  excl=$(input "Exclude patterns (comma-sep, optional):") || true
+  excl=$(input "Exclude patterns — comma-separated, optional (e.g. *.tmp, .cache):" "") || true
 
-  del=false; ask "Enable --delete? (removes files on dest not in source)" && del=true || true
+  del=false; ask "Enable --delete? (removes files on destination not in source)" && del=true || true
 
   cat > "$CFG/profiles/${id}.conf" <<EOF
 PROFILE_NAME="$name"
