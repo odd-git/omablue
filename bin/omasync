@@ -1,0 +1,227 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+for cmd in rofi notify-send ssh rsync; do
+  command -v "$cmd" &>/dev/null || { notify-send -u critical "omasync" "$cmd not found"; exit 1; }
+done
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$OMABIN:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/omablue/omasync"
+DATA="${XDG_DATA_HOME:-$HOME/.local/share}/omablue/omasync"
+TERMINAL="foot"
+TUI_CLASS="omablue-floating"
+T="-theme my_theme.rasi"
+
+# ── EXECUTE MODE (runs inside foot terminal) ──────────────────────────────────
+
+if [[ "${1:-}" == "--execute" ]]; then
+  DEV_ID="${2:-}"
+  PRF_ID="${3:-}"
+  DRY="${4:-}"
+
+  [[ -z "$DEV_ID" || -z "$PRF_ID" ]] && { echo "Usage: omasync --execute <device> <profile> [--dry-run]"; exit 1; }
+
+  DEV_CONF="$CFG/devices/${DEV_ID}.conf"
+  PRF_CONF="$CFG/profiles/${PRF_ID}.conf"
+  [[ -f "$DEV_CONF" ]] || { echo "Device not found: $DEV_ID"; read -rp "Press Enter..."; exit 1; }
+  [[ -f "$PRF_CONF" ]] || { echo "Profile not found: $PRF_ID"; read -rp "Press Enter..."; exit 1; }
+
+  DEVICE_HOST="" DEVICE_PORT=22 DEVICE_USER="" DEVICE_KEY="" DEVICE_TYPE="" DEVICE_TAILSCALE=false DEVICE_NAME=""
+  # shellcheck disable=SC1090
+  source "$DEV_CONF"
+  PROFILE_NAME="" LOCAL_PATH="" REMOTE_PATH="" DIRECTION=push RSYNC_EXCLUDE="" RSYNC_DELETE=false
+  # shellcheck disable=SC1090
+  source "$PRF_CONF"
+
+  # Tailscale host resolution
+  HOST="$DEVICE_HOST"
+  if [[ "$DEVICE_TAILSCALE" == "true" ]] && command -v tailscale &>/dev/null; then
+    TS_IP=$(tailscale ip "$DEVICE_HOST" 2>/dev/null | head -1) || true
+    [[ -n "$TS_IP" ]] && HOST="$TS_IP"
+  fi
+
+  SOCK_DIR="/tmp/omasync-${USER}"
+  mkdir -p "$SOCK_DIR" && chmod 700 "$SOCK_DIR"
+
+  SSH_CMD="ssh -p ${DEVICE_PORT}"
+  [[ -f "${DEVICE_KEY:-}" ]] && SSH_CMD+=" -i ${DEVICE_KEY}"
+  SSH_CMD+=" -o ControlMaster=auto -o ControlPath=${SOCK_DIR}/%r@%h:%p"
+  SSH_CMD+=" -o ControlPersist=600 -o ServerAliveInterval=30 -o Compression=no"
+
+  FLAGS=(-avzh --progress --partial)
+  [[ "$DRY" == "--dry-run" ]] && FLAGS+=(--dry-run)
+  [[ "$RSYNC_DELETE" == "true" && "$DIRECTION" != "both" ]] && FLAGS+=(--delete)
+  [[ "$DIRECTION" == "both" ]] && FLAGS+=(--update)
+
+  if [[ -n "$RSYNC_EXCLUDE" ]]; then
+    IFS=',' read -ra EXCL <<< "$RSYNC_EXCLUDE"
+    for p in "${EXCL[@]}"; do
+      p="${p#"${p%%[![:space:]]*}"}"; [[ -n "$p" ]] && FLAGS+=(--exclude="$p")
+    done
+  fi
+
+  REMOTE="${DEVICE_USER}@${HOST}:${REMOTE_PATH}/"
+  LOCAL="${LOCAL_PATH}/"
+
+  mkdir -p "$DATA/logs"
+  LOG="$DATA/logs/${DEV_ID}_${PRF_ID}_$(date +%Y%m%d-%H%M%S).log"
+
+  printf '══════════════════════════════\n'
+  printf ' Omasync\n'
+  printf '══════════════════════════════\n'
+  printf ' Device:  %s (%s)\n' "$DEVICE_NAME" "$HOST"
+  printf ' Profile: %s  [%s]\n' "$PROFILE_NAME" "$DIRECTION"
+  printf ' Local:   %s\n' "$LOCAL_PATH"
+  printf ' Remote:  %s\n' "$REMOTE_PATH"
+  [[ "$DRY" == "--dry-run" ]] && printf ' Mode:    DRY RUN\n'
+  printf '══════════════════════════════\n\n'
+
+  RC=0
+  run_rsync() {
+    local src="$1" dst="$2"
+    rsync "${FLAGS[@]}" -e "$SSH_CMD" "$src" "$dst" 2>&1 | tee -a "$LOG" || return ${PIPESTATUS[0]}
+  }
+
+  case "$DIRECTION" in
+    push) run_rsync "$LOCAL" "$REMOTE" || RC=$? ;;
+    pull) run_rsync "$REMOTE" "$LOCAL" || RC=$? ;;
+    both) run_rsync "$REMOTE" "$LOCAL" || RC=$?
+          run_rsync "$LOCAL"  "$REMOTE" || RC=$? ;;
+  esac
+
+  echo ""
+  if [[ $RC -eq 0 ]]; then
+    printf '══ Sync complete ══\n'
+    date -Iseconds > "$DATA/${DEV_ID}_${PRF_ID}.last_sync"
+    notify-send -a "omasync" "Sync complete" "$DEVICE_NAME / $PROFILE_NAME"
+  else
+    printf '══ Sync failed (rsync exit %d) ══\n' "$RC"
+    notify-send -a "omasync" -u critical "Sync failed" "$DEVICE_NAME / $PROFILE_NAME"
+  fi
+
+  # Keep last 10 logs per pair
+  mapfile -t OLD_LOGS < <(ls -t "$DATA/logs/${DEV_ID}_${PRF_ID}_"*.log 2>/dev/null | tail -n +11) || true
+  for f in "${OLD_LOGS[@]}"; do rm -f "$f"; done
+
+  echo ""; read -rp "Press Enter to close..."
+  exit $RC
+fi
+
+# ── INTERACTIVE MODE (rofi selection) ─────────────────────────────────────────
+
+note() { notify-send -a "omasync" "$1" "${2:-}"; }
+
+# Load devices
+DEV_IDS=(); DEV_LABELS=()
+for f in "$CFG/devices/"*.conf; do
+  [[ -f "$f" ]] || continue
+  DEVICE_NAME="" DEVICE_HOST="" DEVICE_PORT=22 DEVICE_TYPE=""
+  # shellcheck disable=SC1090
+  source "$f"
+  id="$(basename "$f" .conf)"
+  last="never"
+  lf="$DATA/${id}_"*.last_sync
+  # shellcheck disable=SC2206
+  arr=($lf)
+  if [[ -f "${arr[0]:-}" ]]; then
+    ts=$(<"${arr[0]}")
+    diff=$(( $(date +%s) - $(date -d "$ts" +%s 2>/dev/null || echo 0) ))
+    if   [[ $diff -lt 60 ]];    then last="just now"
+    elif [[ $diff -lt 3600 ]];  then last="${diff}s ago"
+    elif [[ $diff -lt 86400 ]]; then last="$((diff/3600))h ago"
+    else last="$((diff/86400))d ago"; fi
+  fi
+  DEV_IDS+=("$id")
+  DEV_LABELS+=("$DEVICE_NAME  ($DEVICE_HOST)  [$DEVICE_TYPE]  last: $last")
+done
+
+if [[ ${#DEV_IDS[@]} -eq 0 ]]; then
+  note "No devices" "Run omasync-setup to add a device first."
+  exit 1
+fi
+
+# Select device
+SEL_DLABEL=$(printf '%s\n' "${DEV_LABELS[@]}" | rofi -dmenu -p " Device:" $T) || exit 0
+[[ -z "$SEL_DLABEL" ]] && exit 0
+SEL_DEV=""
+for i in "${!DEV_LABELS[@]}"; do
+  [[ "${DEV_LABELS[$i]}" == "$SEL_DLABEL" ]] && SEL_DEV="${DEV_IDS[$i]}" && break
+done
+[[ -z "$SEL_DEV" ]] && exit 0
+
+# Load profiles — device-specific first, then all
+PRF_IDS=(); PRF_LABELS=()
+# Try device-specific profiles first
+for f in "$CFG/profiles/${SEL_DEV}-"*.conf; do
+  [[ -f "$f" ]] || continue
+  PROFILE_NAME="" LOCAL_PATH="" DIRECTION=""
+  # shellcheck disable=SC1090
+  source "$f"
+  id="$(basename "$f" .conf)"
+  last="never"
+  lf="$DATA/${SEL_DEV}_${id}.last_sync"
+  if [[ -f "$lf" ]]; then
+    ts=$(<"$lf")
+    diff=$(( $(date +%s) - $(date -d "$ts" +%s 2>/dev/null || echo 0) ))
+    if   [[ $diff -lt 60 ]];    then last="just now"
+    elif [[ $diff -lt 3600 ]];  then last="${diff}s ago"
+    elif [[ $diff -lt 86400 ]]; then last="$((diff/3600))h ago"
+    else last="$((diff/86400))d ago"; fi
+  fi
+  PRF_IDS+=("$id")
+  PRF_LABELS+=("$PROFILE_NAME  [$DIRECTION]  $(basename "$LOCAL_PATH")  last: $last")
+done
+
+# Fall back to all profiles if no device-specific ones
+if [[ ${#PRF_IDS[@]} -eq 0 ]]; then
+  for f in "$CFG/profiles/"*.conf; do
+    [[ -f "$f" ]] || continue
+    PROFILE_NAME="" LOCAL_PATH="" DIRECTION=""
+    # shellcheck disable=SC1090
+    source "$f"
+    id="$(basename "$f" .conf)"
+    last="never"
+    lf="$DATA/${SEL_DEV}_${id}.last_sync"
+    if [[ -f "$lf" ]]; then
+      ts=$(<"$lf")
+      diff=$(( $(date +%s) - $(date -d "$ts" +%s 2>/dev/null || echo 0) ))
+      if   [[ $diff -lt 60 ]];    then last="just now"
+      elif [[ $diff -lt 3600 ]];  then last="${diff}s ago"
+      elif [[ $diff -lt 86400 ]]; then last="$((diff/3600))h ago"
+      else last="$((diff/86400))d ago"; fi
+    fi
+    PRF_IDS+=("$id")
+    PRF_LABELS+=("$PROFILE_NAME  [$DIRECTION]  $(basename "$LOCAL_PATH")  last: $last")
+  done
+fi
+
+if [[ ${#PRF_IDS[@]} -eq 0 ]]; then
+  note "No profiles" "Run omasync-setup to add a profile first."
+  exit 1
+fi
+
+# Select profile
+SEL_PLABEL=$(printf '%s\n' "${PRF_LABELS[@]}" | rofi -dmenu -p " Profile:" $T) || exit 0
+[[ -z "$SEL_PLABEL" ]] && exit 0
+SEL_PRF=""
+for i in "${!PRF_LABELS[@]}"; do
+  [[ "${PRF_LABELS[$i]}" == "$SEL_PLABEL" ]] && SEL_PRF="${PRF_IDS[$i]}" && break
+done
+[[ -z "$SEL_PRF" ]] && exit 0
+
+# Action
+ACTION=$(printf 'Run Sync\nDry Run\nCancel\n' | rofi -dmenu -p "Action:" $T) || exit 0
+case "$ACTION" in
+  "Run Sync") DRY_FLAG="" ;;
+  "Dry Run")  DRY_FLAG="--dry-run" ;;
+  *)          exit 0 ;;
+esac
+
+# Launch in foot
+nohup "$TERMINAL" \
+  --app-id="$TUI_CLASS" \
+  --title="Omasync" \
+  /bin/bash -lc "'$OMABIN/omasync' --execute '$SEL_DEV' '$SEL_PRF' '$DRY_FLAG'" \
+  >/dev/null 2>&1 &

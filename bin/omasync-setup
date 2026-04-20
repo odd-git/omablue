@@ -1,0 +1,446 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+for cmd in rofi notify-send ssh rsync; do
+  command -v "$cmd" &>/dev/null || { notify-send -u critical "omasync-setup" "$cmd not found"; exit 1; }
+done
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$OMABIN:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/omablue/omasync"
+SSH_DIR="$HOME/.ssh"
+mkdir -p "$CFG/devices" "$CFG/profiles" "$SSH_DIR"
+chmod 700 "$SSH_DIR"
+
+# Source lib for discovery functions
+# shellcheck disable=SC1090
+source "$OMABIN/omasync-lib.sh"
+
+T="-theme my_theme.rasi"
+
+menu()  { printf '%s\n' "$@" | rofi -dmenu -i -p "${TITLE:-Menu}" $T || true; }
+input() { local p="$1" d="${2:-}"; printf '%s\n' "$d" | rofi -dmenu -p "$p" -filter "$d" $T || true; }
+ask()   { [[ "$(printf 'Yes\nNo\n' | rofi -dmenu -p "$1" $T || true)" == "Yes" ]]; }
+note()  { notify-send -a "omasync" "$1" "${2:-}"; }
+err()   { notify-send -a "omasync" -u critical "$1" "${2:-}"; }
+
+slug()  { echo "$1" | tr '[:upper:]' '[:lower:]' | tr ' ' '-' | tr -cd 'a-z0-9-_'; }
+
+# ── DEVICES ────────────────────────────────────────────────────────────────────
+
+add_device() {
+  local name host port user dtype ts key id
+  local source_mode
+
+  source_mode=$(printf 'Discover\nManual entry\n' | rofi -dmenu -p "Add device:" $T) || return 0
+  [[ -z "$source_mode" ]] && return 0
+
+  if [[ "$source_mode" == "Discover" ]]; then
+    discover_and_add_device
+  else
+    manual_add_device
+  fi
+}
+
+discover_and_add_device() {
+  local -a entries=()
+  local -a labels=()
+
+  # Tailscale peers (prioritized)
+  if is_tailscale_available; then
+    while IFS=$'\t' read -r hostname ip os; do
+      entries+=("TS|$hostname|$ip|$os|true")
+      labels+=("  TS  $hostname  ($ip)  [$os]")
+    done < <(scan_tailscale_peers 2>/dev/null)
+  fi
+
+  # LAN hosts
+  while IFS=$'\t' read -r ip port; do
+    entries+=("LAN|$ip|$ip|unknown|false")
+    labels+=(" LAN  $ip:$port")
+  done < <(scan_lan_hosts 2>/dev/null)
+
+  if [[ ${#entries[@]} -eq 0 ]]; then
+    err "No devices found" "Check network connection or use Manual entry"
+    return 0
+  fi
+
+  local selected
+  selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "Select device:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local idx=-1
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && idx=$i && break
+  done
+  [[ $idx -lt 0 ]] && return 0
+
+  local source hostname ip os ts
+  IFS='|' read -r source hostname ip os ts <<< "${entries[$idx]}"
+
+  local name user port dtype
+  name=$(input "Device name:" "$hostname") || return 0
+  [[ -z "$name" ]] && return 0
+  id=$(slug "$name")
+
+  user=$(input "SSH username:") || return 0
+  [[ -z "$user" ]] && return 0
+
+  if [[ "$source" == "LAN" ]]; then
+    # For LAN, we already know the port from port probe
+    local probe_port
+    while IFS=$'\t' read -r p_ip p_port; do
+      if [[ "$p_ip" == "$ip" ]]; then probe_port=$p_port; break; fi
+    done < <(scan_lan_hosts)
+    port=$(input "SSH port:" "${probe_port:-22}") || return 0
+    [[ -z "$port" ]] && port=22
+    ts="false"
+  else
+    # Tailscale - default to 22, allow override
+    port=$(input "SSH port:" "22") || return 0
+    [[ -z "$port" ]] && port=22
+    ts="true"
+  fi
+
+  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type:" $T) || return 0
+  [[ -z "$dtype" ]] && return 0
+
+  key="$SSH_DIR/omasync_${id}"
+  key_existed=false
+  if [[ ! -f "$key" ]]; then
+    ssh-keygen -t ed25519 -f "$key" -N "" -C "omasync@${id}" -q
+    chmod 600 "$key"; chmod 644 "${key}.pub"
+  else
+    key_existed=true
+  fi
+
+  local pub; pub=$(<"${key}.pub")
+  command -v wl-copy &>/dev/null && printf '%s' "$pub" | wl-copy || true
+
+  local key_installed=false
+  if check_ssh_key_installed "$key" "$user" "$ip" "$port"; then
+    key_installed=true
+    note "SSH key installed" "Key is already authorized on remote"
+  else
+    local guide
+    case "$dtype" in
+      termux) guide="1. pkg install openssh\n2. mkdir -p ~/.ssh\n3. Paste key in ~/.ssh/authorized_keys\n4. chmod 600 ~/.ssh/authorized_keys\n5. sshd  (port 8022 by default)\n\n$pub" ;;
+      *)      guide="ssh-copy-id -i ${key}.pub -p ${port} ${user}@${ip}\n\nOr paste manually into ~/.ssh/authorized_keys\n\n$pub" ;;
+    esac
+    printf 'OK\n' | rofi -dmenu -p "Setup guide — press Enter to continue" -mesg "$guide" $T || true
+  fi
+
+  cat > "$CFG/devices/${id}.conf" <<EOF
+DEVICE_NAME="$name"
+DEVICE_HOST="$hostname"
+DEVICE_PORT="$port"
+DEVICE_USER="$user"
+DEVICE_KEY="$key"
+DEVICE_TYPE="$dtype"
+DEVICE_TAILSCALE="$ts"
+EOF
+  note "Device saved" "$name → $hostname:$port"
+
+  if ask "Test connection to $name now?"; then
+    local opts=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$port")
+    [[ -f "$key" ]] && opts+=(-i "$key")
+    if ssh "${opts[@]}" "${user}@${ip}" exit 2>/dev/null; then
+      note "Connection OK" "$name is reachable"
+    else
+      err "Connection failed" "Check: device online? sshd running? key installed?"
+    fi
+  fi
+
+  if ask "Add sync profiles for $name now?"; then
+    while true; do
+      add_device_profile "$id" || break
+      ask "Add another profile?" || break
+    done
+  fi
+}
+
+manual_add_device() {
+  local name host port user dtype ts key
+
+  name=$(input "Device name:") || return 0
+  [[ -z "$name" ]] && return 0
+  local id; id=$(slug "$name")
+
+  host=$(input "Host or IP:") || return 0
+  [[ -z "$host" ]] && return 0
+
+  port=$(input "SSH port:" "22") || return 0
+  [[ -z "$port" ]] && port=22
+
+  user=$(input "SSH username:") || return 0
+  [[ -z "$user" ]] && return 0
+
+  dtype=$(printf 'linux\ntermux\nmacos\n' | rofi -dmenu -p "Device type:" $T) || return 0
+  [[ -z "$dtype" ]] && return 0
+
+  ts=false; ask "Use Tailscale for this device?" && ts=true || true
+
+  key="$SSH_DIR/omasync_${id}"
+  if [[ ! -f "$key" ]]; then
+    ssh-keygen -t ed25519 -f "$key" -N "" -C "omasync@${id}" -q
+    chmod 600 "$key"; chmod 644 "${key}.pub"
+  fi
+
+  local pub; pub=$(<"${key}.pub")
+  command -v wl-copy &>/dev/null && printf '%s' "$pub" | wl-copy || true
+
+  if check_ssh_key_installed "$key" "$user" "$host" "$port"; then
+    note "SSH key installed" "Key is already authorized on remote"
+  else
+    local guide
+    case "$dtype" in
+      termux) guide="1. pkg install openssh\n2. mkdir -p ~/.ssh\n3. Paste key in ~/.ssh/authorized_keys\n4. chmod 600 ~/.ssh/authorized_keys\n5. sshd  (port 8022 by default)\n\n$pub" ;;
+      *)      guide="ssh-copy-id -i ${key}.pub -p ${port} ${user}@${host}\n\nOr paste manually into ~/.ssh/authorized_keys\n\n$pub" ;;
+    esac
+    printf 'OK\n' | rofi -dmenu -p "Setup guide — press Enter to continue" -mesg "$guide" $T || true
+  fi
+
+  cat > "$CFG/devices/${id}.conf" <<EOF
+DEVICE_NAME="$name"
+DEVICE_HOST="$host"
+DEVICE_PORT="$port"
+DEVICE_USER="$user"
+DEVICE_KEY="$key"
+DEVICE_TYPE="$dtype"
+DEVICE_TAILSCALE="$ts"
+EOF
+  note "Device saved" "$name → $host:$port"
+
+  if ask "Test connection to $name now?"; then
+    local opts=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$port")
+    [[ -f "$key" ]] && opts+=(-i "$key")
+    if ssh "${opts[@]}" "${user}@${host}" exit 2>/dev/null; then
+      note "Connection OK" "$name is reachable"
+    else
+      err "Connection failed" "Check: device online? sshd running? correct port/user?"
+    fi
+  fi
+
+  if ask "Add sync profiles for $name now?"; then
+    while true; do
+      add_device_profile "$id" || break
+      ask "Add another profile?" || break
+    done
+  fi
+}
+
+add_device_profile() {
+  local device_id="$1"
+  local DEVICE_TYPE=""
+  # Load device type for defaults
+  if [[ -f "$CFG/devices/${device_id}.conf" ]]; then
+    source "$CFG/devices/${device_id}.conf" 2>/dev/null || true
+  fi
+
+  local name lpath rpath dir excl del
+
+  name=$(input "Profile name (e.g. notes, keepass):") || return 0
+  [[ -z "$name" ]] && return 0
+  local id; id="${device_id}-$(slug "$name")"
+
+  lpath=$(input "Local path:" "$HOME/") || return 0
+  [[ -z "$lpath" ]] && return 0
+  lpath="${lpath/#\~/$HOME}"
+
+  local default_rpath
+  case "$DEVICE_TYPE" in
+    termux) default_rpath="/storage/shared/" ;;
+    *)      default_rpath="$HOME/" ;;
+  esac
+  rpath=$(input "Remote path:" "$default_rpath") || return 0
+  [[ -z "$rpath" ]] && return 0
+
+  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction:" $T) || return 0
+  [[ -z "$dir" ]] && return 0
+
+  excl=$(input "Exclude patterns (comma-sep, optional):") || true
+
+  del=false; ask "Enable --delete? (removes files on dest not in source)" && del=true || true
+
+  cat > "$CFG/profiles/${id}.conf" <<EOF
+PROFILE_NAME="$name"
+LOCAL_PATH="$lpath"
+REMOTE_PATH="$rpath"
+DIRECTION="$dir"
+RSYNC_EXCLUDE="$excl"
+RSYNC_DELETE="$del"
+DEVICE_ID="$device_id"
+EOF
+  note "Profile saved" "$name  [$dir]  $lpath ↔ $rpath"
+}
+
+edit_device() {
+  local -a ids=(); for f in "$CFG/devices/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
+  [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
+  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Edit device:" $T) || return 0
+  [[ -z "$id" ]] && return 0
+  local DEVICE_HOST DEVICE_PORT DEVICE_USER DEVICE_KEY DEVICE_TYPE DEVICE_TAILSCALE DEVICE_NAME
+  # shellcheck disable=SC1090
+  source "$CFG/devices/${id}.conf"
+  local h u p
+  h=$(input "Host or IP:" "$DEVICE_HOST"); [[ -z "$h" ]] && h="$DEVICE_HOST"
+  p=$(input "SSH port:" "$DEVICE_PORT");   [[ -z "$p" ]] && p="$DEVICE_PORT"
+  u=$(input "SSH username:" "$DEVICE_USER"); [[ -z "$u" ]] && u="$DEVICE_USER"
+  sed -i "s|DEVICE_HOST=.*|DEVICE_HOST=\"$h\"|; s|DEVICE_PORT=.*|DEVICE_PORT=\"$p\"|; s|DEVICE_USER=.*|DEVICE_USER=\"$u\"|" "$CFG/devices/${id}.conf"
+  note "Device updated" "$DEVICE_NAME"
+}
+
+remove_device() {
+  local -a ids=(); for f in "$CFG/devices/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
+  [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Nothing to remove."; return 0; }
+  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Remove device:" $T) || return 0
+  [[ -z "$id" ]] && return 0
+  local DEVICE_NAME DEVICE_KEY
+  # shellcheck disable=SC1090
+  source "$CFG/devices/${id}.conf"
+  ask "Remove '$DEVICE_NAME'? Cannot be undone." || return 0
+  rm -f "$CFG/devices/${id}.conf"
+  if [[ -f "${DEVICE_KEY:-}" ]] && ask "Also delete SSH key for $DEVICE_NAME?"; then
+    rm -f "$DEVICE_KEY" "${DEVICE_KEY}.pub"
+  fi
+  note "Device removed" "$DEVICE_NAME"
+}
+
+list_devices() {
+  local -a lines=()
+  for f in "$CFG/devices/"*.conf; do
+    [[ -f "$f" ]] || continue
+    local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_TYPE
+    # shellcheck disable=SC1090
+    source "$f"
+    lines+=("$DEVICE_NAME  [$DEVICE_TYPE]  $DEVICE_HOST:$DEVICE_PORT")
+  done
+  [[ ${#lines[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
+  printf '%s\n' "${lines[@]}" | rofi -dmenu -p "Devices:" $T || true
+}
+
+# ── PROFILES ───────────────────────────────────────────────────────────────────
+
+add_profile() {
+  local name lpath rpath dir excl del
+
+  name=$(input "Profile name (e.g. notes, keepass):") || return 0
+  [[ -z "$name" ]] && return 0
+  local id; id=$(slug "$name")
+
+  lpath=$(input "Local path:" "$HOME/") || return 0
+  [[ -z "$lpath" ]] && return 0
+  lpath="${lpath/#\~/$HOME}"
+
+  rpath=$(input "Remote path:") || return 0
+  [[ -z "$rpath" ]] && return 0
+
+  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction:" $T) || return 0
+  [[ -z "$dir" ]] && return 0
+
+  excl=$(input "Exclude patterns (comma-sep, optional):") || true
+
+  del=false; ask "Enable --delete? (removes files on dest not in source)" && del=true || true
+
+  cat > "$CFG/profiles/${id}.conf" <<EOF
+PROFILE_NAME="$name"
+LOCAL_PATH="$lpath"
+REMOTE_PATH="$rpath"
+DIRECTION="$dir"
+RSYNC_EXCLUDE="$excl"
+RSYNC_DELETE="$del"
+EOF
+  note "Profile saved" "$name  [$dir]  $lpath ↔ $rpath"
+}
+
+edit_profile() {
+  local -a ids=(); for f in "$CFG/profiles/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
+  [[ ${#ids[@]} -eq 0 ]] && { err "No profiles" "Add a profile first."; return 0; }
+  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Edit profile:" $T) || return 0
+  [[ -z "$id" ]] && return 0
+  local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION RSYNC_EXCLUDE RSYNC_DELETE
+  # shellcheck disable=SC1090
+  source "$CFG/profiles/${id}.conf"
+  local l r d
+  l=$(input "Local path:" "$LOCAL_PATH");   [[ -z "$l" ]] && l="$LOCAL_PATH"
+  r=$(input "Remote path:" "$REMOTE_PATH"); [[ -z "$r" ]] && r="$REMOTE_PATH"
+  d=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction:" -filter "$DIRECTION" $T) || return 0
+  [[ -z "$d" ]] && d="$DIRECTION"
+  sed -i "s|LOCAL_PATH=.*|LOCAL_PATH=\"$l\"|; s|REMOTE_PATH=.*|REMOTE_PATH=\"$r\"|; s|DIRECTION=.*|DIRECTION=\"$d\"|" "$CFG/profiles/${id}.conf"
+  note "Profile updated" "$PROFILE_NAME"
+}
+
+remove_profile() {
+  local -a ids=(); for f in "$CFG/profiles/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
+  [[ ${#ids[@]} -eq 0 ]] && { err "No profiles" "Nothing to remove."; return 0; }
+  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Remove profile:" $T) || return 0
+  [[ -z "$id" ]] && return 0
+  local PROFILE_NAME
+  # shellcheck disable=SC1090
+  source "$CFG/profiles/${id}.conf"
+  ask "Remove profile '$PROFILE_NAME'?" || return 0
+  rm -f "$CFG/profiles/${id}.conf"
+  note "Profile removed" "$PROFILE_NAME"
+}
+
+list_profiles() {
+  local -a lines=()
+  for f in "$CFG/profiles/"*.conf; do
+    [[ -f "$f" ]] || continue
+    local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
+    # shellcheck disable=SC1090
+    source "$f"
+    lines+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH → $REMOTE_PATH")
+  done
+  [[ ${#lines[@]} -eq 0 ]] && { err "No profiles" "Add a profile first."; return 0; }
+  printf '%s\n' "${lines[@]}" | rofi -dmenu -p "Profiles:" $T || true
+}
+
+# ── CONN TEST ──────────────────────────────────────────────────────────────────
+
+test_conn() {
+  local -a ids=(); for f in "$CFG/devices/"*.conf; do [[ -f "$f" ]] && ids+=("$(basename "$f" .conf)"); done
+  [[ ${#ids[@]} -eq 0 ]] && { err "No devices" "Add a device first."; return 0; }
+  local id; id=$(printf '%s\n' "${ids[@]}" | rofi -dmenu -p "Test connection:" $T) || return 0
+  [[ -z "$id" ]] && return 0
+  local DEVICE_NAME DEVICE_HOST DEVICE_PORT DEVICE_USER DEVICE_KEY DEVICE_TYPE DEVICE_TAILSCALE
+  # shellcheck disable=SC1090
+  source "$CFG/devices/${id}.conf"
+  local opts=(-o ConnectTimeout=5 -o BatchMode=yes -o StrictHostKeyChecking=accept-new -p "$DEVICE_PORT")
+  [[ -f "${DEVICE_KEY:-}" ]] && opts+=(-i "$DEVICE_KEY")
+  if ssh "${opts[@]}" "${DEVICE_USER}@${DEVICE_HOST}" exit 2>/dev/null; then
+    note "Connection OK" "$DEVICE_NAME ($DEVICE_HOST:$DEVICE_PORT)"
+  else
+    err "Connection failed" "$DEVICE_NAME — device online? sshd running?"
+  fi
+}
+
+# ── MAIN MENU ─────────────────────────────────────────────────────────────────
+
+while true; do
+  TITLE="Omasync Setup"
+  CHOICE=$(menu \
+    " Add Device" \
+    " Add Profile" \
+    "  Edit Device" \
+    "  Edit Profile" \
+    "  Remove Device" \
+    "  Remove Profile" \
+    " List Devices" \
+    " List Profiles" \
+    "󰗠 Test Connection") || exit 0
+
+  case "$CHOICE" in
+    *"Add Device"*)      add_device ;;
+    *"Add Profile"*)     add_profile ;;
+    *"Edit Device"*)     edit_device ;;
+    *"Edit Profile"*)    edit_profile ;;
+    *"Remove Device"*)   remove_device ;;
+    *"Remove Profile"*)  remove_profile ;;
+    *"List Devices"*)    list_devices ;;
+    *"List Profiles"*)   list_profiles ;;
+    *"Test Connection"*) test_conn ;;
+    "") exit 0 ;;
+  esac
+done
