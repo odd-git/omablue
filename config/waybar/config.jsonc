@@ -5,7 +5,7 @@
   "spacing": 0,
   "height": 26,
   "modules-left": ["custom/omablue", "sway/workspaces"],
-  "modules-center": ["clock", "custom/update", "custom/screenrecording-indicator"],
+  "modules-center": ["clock", "custom/sync", "custom/screenrecording-indicator"],
   "modules-right": [
     "group/tray-expander",
     "bluetooth",
@@ -46,10 +46,9 @@
     "on-click-right": "xdg-terminal-exec",
     "tooltip-format": "Omablue Menu\n\nSuper + Esc"
   },
-  "custom/update": {
-    "format": "",
-    "exec": "omarchy-update-available",
-    "on-click": "omarchy-launch-floating-terminal-with-presentation omarchy-update",
+  "custom/sync": {
+    "format": "  ",
+    "on-click": "omasync",
     "tooltip-format": "Omarchy update available",
     "signal": 7,
     "interval": 21600
@@ -93,7 +92,7 @@
     "tooltip-format-discharging": "{power:>1.0f}W↓ {capacity}%",
     "tooltip-format-charging": "{power:>1.0f}W↑ {capacity}%",
     "interval": 5,
-    "on-click": "omarchy-menu power",
+    "on-click": "omablue-tuned",
     "states": {
       "warning": 20,
       "critical": 10
