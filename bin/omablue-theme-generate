@@ -186,18 +186,21 @@ generate_dunst_theme() {
     background = "$bg"
     foreground = "$fg"
     frame_color = "$accent"
+    highlight = "$accent"
     timeout = 5
 
 [urgency_normal]
     background = "$bg"
     foreground = "$fg"
     frame_color = "$accent"
+    highlight = "$accent"
     timeout = 10
 
 [urgency_critical]
     background = "$bg"
     foreground = "$red"
     frame_color = "$red"
+    highlight = "$red"
     timeout = 0
 EOF
 

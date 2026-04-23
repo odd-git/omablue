@@ -2,7 +2,7 @@
 @import "colors.css";
 
 * {
-  background-color: @background;
+  background-color: transparent;
   color: @foreground;
 
   border: none;
@@ -58,7 +58,20 @@
 }
 
 tooltip {
-  padding: 2px;
+  background-color: @background;
+  color: @foreground;
+  border: 1px solid @accent;
+  border-radius: 6px;
+  padding: 6px 10px;
+}
+
+tooltip > box {
+  background-color: @background;
+}
+
+tooltip label {
+  color: @foreground;
+  background-color: transparent;
 }
 
 #custom-update {
@@ -81,4 +94,23 @@ tooltip {
 
 #custom-screenrecording-indicator.active {
   color: @red;
+}
+
+#custom-scratchpad {
+  color: @accent;
+  font-size: 14px;
+  padding: 0 10px;
+  transition: all 0.3s ease;
+}
+
+#custom-scratchpad.empty {
+  padding: 0;
+}
+
+#custom-scratchpad.chromium {
+  color: @blue;
+}
+
+.tray-group-item {
+  margin-left: 8px;
 }

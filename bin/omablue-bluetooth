@@ -30,7 +30,7 @@ trap cleanup_scan EXIT INT TERM
 # bluez 5.86 non-interactive DBus timing issue on secureblue. In command mode,
 # bluetoothctl exits before the DBus connection is established and returns nothing.
 bt_cmd() {
-  printf '%s\n' "$*" | bluetoothctl 2>/dev/null | \
+  { printf '%s\n' "$*"; sleep 2; } | bluetoothctl 2>/dev/null | \
     sed 's/\x1B\[[0-9;]*[a-zA-Z]//g; s/\r//g' | \
     sed 's/^\[bluetoothctl\]>[[:space:]]*//' | \
     grep -v -E '^$|^Waiting to connect|^Agent registered|SupportedUUIDs|new_settings|\[CHG\]|\[NEW\]|\[DEL\]'
