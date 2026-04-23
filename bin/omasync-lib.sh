@@ -47,7 +47,7 @@ check_dependencies() {
 # =============================================================================
 
 ensure_dirs() {
-  mkdir -p "$OMASYNC_CONFIG_DIR"/{devices,profiles}
+  mkdir -p "$OMASYNC_CONFIG_DIR"/{devices,profiles,links}
   mkdir -p "$OMASYNC_DATA_DIR/logs"
   mkdir -p "${DEFAULT_SSH_DIR:-$HOME/.ssh}"
   chmod 700 "${DEFAULT_SSH_DIR:-$HOME/.ssh}"
@@ -151,7 +151,57 @@ load_profile() {
 
   [[ -n "$PROFILE_NAME" ]] || { err "Profile $name: missing PROFILE_NAME"; return 1; }
   [[ -n "$LOCAL_PATH" ]]   || { err "Profile $name: missing LOCAL_PATH"; return 1; }
-  [[ -n "$REMOTE_PATH" ]]  || { err "Profile $name: missing REMOTE_PATH"; return 1; }
+  # REMOTE_PATH is optional for base profiles (no DEVICE_ID)
+  [[ -z "$DEVICE_ID" ]] || [[ -n "$REMOTE_PATH" ]] || { err "Profile $name: missing REMOTE_PATH"; return 1; }
+}
+
+# Load a device-profile link: merges base profile + link overrides.
+# Caller gets PROFILE_NAME, LOCAL_PATH, REMOTE_PATH, DIRECTION, RSYNC_EXCLUDE, RSYNC_DELETE set.
+load_link() {
+  local device_id="$1" profile_id="$2"
+  local link_conf="$OMASYNC_CONFIG_DIR/links/${device_id}--${profile_id}.conf"
+  local base_conf="$OMASYNC_CONFIG_DIR/profiles/${profile_id}.conf"
+  [[ -f "$link_conf" ]] || { err "Link not found: ${device_id}--${profile_id}"; return 1; }
+  [[ -f "$base_conf" ]] || { err "Base profile not found: ${profile_id}"; return 1; }
+
+  # Load base profile first
+  PROFILE_NAME="" LOCAL_PATH="" REMOTE_PATH=""
+  DIRECTION="push" RSYNC_EXCLUDE="" RSYNC_DELETE="false" DEVICE_ID=""
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    key=$(echo "$key" | xargs)
+    value=$(_parse_value "$(echo "$value" | xargs)")
+    case "$key" in
+      PROFILE_NAME)  PROFILE_NAME="$value" ;;
+      LOCAL_PATH)    LOCAL_PATH="$value" ;;
+      DIRECTION)     [[ "$value" =~ ^(push|pull|both)$ ]] && DIRECTION="$value" ;;
+      RSYNC_EXCLUDE) RSYNC_EXCLUDE="$value" ;;
+      RSYNC_DELETE)  [[ "$value" =~ ^(true|false)$ ]] && RSYNC_DELETE="$value" ;;
+    esac
+  done < "$base_conf"
+
+  # Apply link overrides (REMOTE_PATH required; DIRECTION/EXCLUDE/DELETE optional)
+  local LINK_DEVICE="" LINK_PROFILE="" LINK_REMOTE="" LINK_DIR="" LINK_EXCL="" LINK_DEL=""
+  while IFS='=' read -r key value; do
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    key=$(echo "$key" | xargs)
+    value=$(_parse_value "$(echo "$value" | xargs)")
+    case "$key" in
+      REMOTE_PATH)   LINK_REMOTE="$value" ;;
+      DIRECTION)     [[ "$value" =~ ^(push|pull|both)$ ]] && LINK_DIR="$value" ;;
+      RSYNC_EXCLUDE) LINK_EXCL="$value" ;;
+      RSYNC_DELETE)  [[ "$value" =~ ^(true|false)$ ]] && LINK_DEL="$value" ;;
+    esac
+  done < "$link_conf"
+
+  [[ -n "$LINK_REMOTE" ]] || { err "Link ${device_id}--${profile_id}: missing REMOTE_PATH"; return 1; }
+  REMOTE_PATH="$LINK_REMOTE"
+  DEVICE_ID="$device_id"
+  [[ -n "$LINK_DIR" ]]  && DIRECTION="$LINK_DIR"
+  [[ -n "$LINK_EXCL" ]] && RSYNC_EXCLUDE="$LINK_EXCL"
+  [[ -n "$LINK_DEL" ]]  && RSYNC_DELETE="$LINK_DEL"
+  [[ -n "$PROFILE_NAME" ]] || { err "Base profile $profile_id: missing PROFILE_NAME"; return 1; }
+  [[ -n "$LOCAL_PATH" ]]   || { err "Base profile $profile_id: missing LOCAL_PATH"; return 1; }
 }
 
 # =============================================================================
@@ -181,6 +231,38 @@ list_device_profiles() {
   local files=("$dir/${device}-"*.conf)
   [[ -e "${files[0]}" ]] || return 1
   for f in "${files[@]}"; do basename "$f" .conf; done
+}
+
+# List base profiles: profiles/ files with no DEVICE_ID (reusable templates)
+list_base_profiles() {
+  local dir="$OMASYNC_CONFIG_DIR/profiles"
+  [[ -d "$dir" ]] || return 0
+  for f in "$dir"/*.conf; do
+    [[ -f "$f" ]] || continue
+    local dev_id=""
+    while IFS='=' read -r k v; do
+      [[ "$k" =~ ^[[:space:]]*# ]] && continue
+      k=$(echo "$k" | xargs)
+      if [[ "$k" == "DEVICE_ID" ]]; then
+        v=$(_parse_value "$(echo "$v" | xargs)")
+        dev_id="$v"
+        break
+      fi
+    done < "$f"
+    [[ -z "$dev_id" ]] && basename "$f" .conf
+  done
+}
+
+# List profile IDs linked to a device (from links/ dir)
+list_links_for_device() {
+  local device_id="$1"
+  local dir="$OMASYNC_CONFIG_DIR/links"
+  [[ -d "$dir" ]] || return 0
+  for f in "$dir/${device_id}--"*.conf; do
+    [[ -f "$f" ]] || continue
+    local base; base=$(basename "$f" .conf)
+    echo "${base#${device_id}--}"
+  done
 }
 
 sanitize_name() {
@@ -463,6 +545,44 @@ RSYNC_EXCLUDE="$exclude"
 RSYNC_DELETE="$delete"
 DEVICE_ID="$device_id"
 EOF
+}
+
+# Save a base profile (no remote path, no device ID — reusable template)
+save_base_profile_config() {
+  local slug="$1" name="$2" local_path="$3" direction="$4" exclude="$5" delete="$6"
+  local conf="$OMASYNC_CONFIG_DIR/profiles/${slug}.conf"
+
+  cat > "$conf" << EOF
+# Base Profile: $name — created $(date +%Y-%m-%d)
+# Link this profile to devices via omasync-setup → Manage Device → Link Profile
+
+PROFILE_NAME="$name"
+LOCAL_PATH="$local_path"
+DIRECTION="$direction"
+RSYNC_EXCLUDE="$exclude"
+RSYNC_DELETE="$delete"
+EOF
+}
+
+# Save a link: maps profile_id to device_id with device-specific remote path
+save_link_config() {
+  local device_id="$1" profile_id="$2" remote_path="$3"
+  local direction="${4:-}" exclude="${5:-}" delete="${6:-}"
+  mkdir -p "$OMASYNC_CONFIG_DIR/links"
+  local conf="$OMASYNC_CONFIG_DIR/links/${device_id}--${profile_id}.conf"
+
+  cat > "$conf" << EOF
+# Link: profile '$profile_id' → device '$device_id' — created $(date +%Y-%m-%d)
+
+LINK_DEVICE="$device_id"
+LINK_PROFILE="$profile_id"
+REMOTE_PATH="$remote_path"
+EOF
+  # Write optional per-device overrides (empty = inherit from base profile)
+  if [[ -n "$direction" ]]; then printf 'DIRECTION="%s"\n'      "$direction" >> "$conf"; fi
+  if [[ -n "$exclude" ]];   then printf 'RSYNC_EXCLUDE="%s"\n'  "$exclude"   >> "$conf"; fi
+  if [[ -n "$delete" ]];    then printf 'RSYNC_DELETE="%s"\n'   "$delete"    >> "$conf"; fi
+  return 0
 }
 
 # =============================================================================

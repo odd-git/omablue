@@ -36,19 +36,35 @@ if [[ "${1:-}" == "--execute-all" ]]; then
   [[ "$DRY" == "--dry-run" ]] && printf ' Mode:    DRY RUN\n'
   printf '══════════════════════════════\n\n'
 
-  # Collect all profiles for this device (device-specific + shared)
+  # Collect all profiles for this device: device-specific, shared, and linked
   declare -a profiles=()
-  # Device-specific profiles
+  declare -a profile_types=()  # "file" or "link:PROFILE_ID"
+
+  # Device-specific profiles (old style)
   for f in "$CFG/profiles/${DEV_ID}-"*.conf; do
-    [[ -f "$f" ]] && profiles+=("$f")
+    [[ -f "$f" ]] || continue
+    profiles+=("$f")
+    profile_types+=("file")
   done
-  # Shared profiles
+  # Shared profiles (no DEVICE_ID)
   for f in "$CFG/profiles/"*.conf; do
     [[ -f "$f" ]] || continue
     DEVICE_ID=""
     # shellcheck disable=SC1090
     source "$f" 2>/dev/null || continue
-    [[ -z "$DEVICE_ID" ]] && profiles+=("$f")
+    [[ -z "$DEVICE_ID" ]] && { profiles+=("$f"); profile_types+=("file"); }
+  done
+  # New-style links
+  for f in "$CFG/links/${DEV_ID}--"*.conf; do
+    [[ -f "$f" ]] || continue
+    local LINK_PROFILE=""
+    # shellcheck disable=SC1090
+    source "$f" 2>/dev/null || continue
+    [[ -n "$LINK_PROFILE" ]] || continue
+    local base="$CFG/profiles/${LINK_PROFILE}.conf"
+    [[ -f "$base" ]] || continue
+    profiles+=("$f")
+    profile_types+=("link:$LINK_PROFILE")
   done
 
   [[ ${#profiles[@]} -eq 0 ]] && { echo "No profiles found for $DEVICE_NAME"; read -rp "Press Enter..."; exit 1; }
@@ -57,10 +73,24 @@ if [[ "${1:-}" == "--execute-all" ]]; then
   synced=0 failed=0
   profile_idx=1
 
-  for prf_conf in "${profiles[@]}"; do
+  for prf_idx_i in "${!profiles[@]}"; do
+    prf_conf="${profiles[$prf_idx_i]}"
+    prf_type="${profile_types[$prf_idx_i]}"
+
     PROFILE_NAME="" LOCAL_PATH="" REMOTE_PATH="" DIRECTION=push RSYNC_EXCLUDE="" RSYNC_DELETE=false
-    # shellcheck disable=SC1090
-    source "$prf_conf"
+    prf_log_id=""
+    if [[ "$prf_type" == link:* ]]; then
+      LINK_PROFILE_ID="${prf_type#link:}"
+      # shellcheck disable=SC1090
+      source "$CFG/profiles/${LINK_PROFILE_ID}.conf" 2>/dev/null || continue
+      # shellcheck disable=SC1090
+      source "$prf_conf" 2>/dev/null || continue
+      prf_log_id="$LINK_PROFILE_ID"
+    else
+      # shellcheck disable=SC1090
+      source "$prf_conf"
+      prf_log_id="$(basename "$prf_conf" .conf)"
+    fi
 
     printf '\n[%d/%d] Syncing: %s\n' "$profile_idx" "${#profiles[@]}" "$PROFILE_NAME"
     printf '──────────────────────────────\n'
@@ -97,7 +127,7 @@ if [[ "${1:-}" == "--execute-all" ]]; then
     LOCAL="${LOCAL_PATH}/"
 
     mkdir -p "$DATA/logs"
-    LOG="$DATA/logs/${DEV_ID}_$(basename "$prf_conf" .conf)_$(date +%Y%m%d-%H%M%S).log"
+    LOG="$DATA/logs/${DEV_ID}_${prf_log_id}_$(date +%Y%m%d-%H%M%S).log"
 
     RC=0
     run_rsync_all() {
@@ -115,7 +145,7 @@ if [[ "${1:-}" == "--execute-all" ]]; then
     if [[ $RC -eq 0 ]]; then
       printf '✓ %s synced\n' "$PROFILE_NAME"
       ((synced++))
-      date -Iseconds > "$DATA/${DEV_ID}_$(basename "$prf_conf" .conf).last_sync"
+      date -Iseconds > "$DATA/${DEV_ID}_${prf_log_id}.last_sync"
     else
       printf '✗ %s failed (rsync exit %d)\n' "$PROFILE_NAME" "$RC"
       ((failed++))
@@ -123,7 +153,7 @@ if [[ "${1:-}" == "--execute-all" ]]; then
     fi
 
     # Keep last 10 logs per pair
-    mapfile -t OLD_LOGS < <(ls -t "$DATA/logs/${DEV_ID}_$(basename "$prf_conf" .conf)_"*.log 2>/dev/null | tail -n +11) || true
+    mapfile -t OLD_LOGS < <(ls -t "$DATA/logs/${DEV_ID}_${prf_log_id}_"*.log 2>/dev/null | tail -n +11) || true
     for f in "${OLD_LOGS[@]}"; do rm -f "$f"; done
   done
 
@@ -152,16 +182,33 @@ if [[ "${1:-}" == "--execute" ]]; then
   [[ -z "$DEV_ID" || -z "$PRF_ID" ]] && { echo "Usage: omasync --execute <device> <profile> [--dry-run]"; exit 1; }
 
   DEV_CONF="$CFG/devices/${DEV_ID}.conf"
-  PRF_CONF="$CFG/profiles/${PRF_ID}.conf"
   [[ -f "$DEV_CONF" ]] || { echo "Device not found: $DEV_ID"; read -rp "Press Enter..."; exit 1; }
-  [[ -f "$PRF_CONF" ]] || { echo "Profile not found: $PRF_ID"; read -rp "Press Enter..."; exit 1; }
 
   DEVICE_HOST="" DEVICE_PORT=22 DEVICE_USER="" DEVICE_KEY="" DEVICE_TYPE="" DEVICE_TAILSCALE=false DEVICE_NAME=""
   # shellcheck disable=SC1090
   source "$DEV_CONF"
+
   PROFILE_NAME="" LOCAL_PATH="" REMOTE_PATH="" DIRECTION=push RSYNC_EXCLUDE="" RSYNC_DELETE=false
-  # shellcheck disable=SC1090
-  source "$PRF_CONF"
+
+  # PRF_ID may be "link:<profile_id>" for new-style linked profiles
+  PRF_LOG_ID="$PRF_ID"
+  if [[ "$PRF_ID" == link:* ]]; then
+    LINK_PROFILE="${PRF_ID#link:}"
+    PRF_LOG_ID="$LINK_PROFILE"
+    BASE_CONF="$CFG/profiles/${LINK_PROFILE}.conf"
+    LINK_CONF="$CFG/links/${DEV_ID}--${LINK_PROFILE}.conf"
+    [[ -f "$BASE_CONF" ]] || { echo "Base profile not found: $LINK_PROFILE"; read -rp "Press Enter..."; exit 1; }
+    [[ -f "$LINK_CONF" ]] || { echo "Link not found: ${DEV_ID}--${LINK_PROFILE}"; read -rp "Press Enter..."; exit 1; }
+    # shellcheck disable=SC1090
+    source "$BASE_CONF"   # sets PROFILE_NAME, LOCAL_PATH, DIRECTION, EXCLUDE, DELETE
+    # shellcheck disable=SC1090
+    source "$LINK_CONF"   # overrides REMOTE_PATH (and optionally DIRECTION etc.)
+  else
+    PRF_CONF="$CFG/profiles/${PRF_ID}.conf"
+    [[ -f "$PRF_CONF" ]] || { echo "Profile not found: $PRF_ID"; read -rp "Press Enter..."; exit 1; }
+    # shellcheck disable=SC1090
+    source "$PRF_CONF"
+  fi
 
   # Tailscale host resolution
   HOST="$DEVICE_HOST"
@@ -194,7 +241,7 @@ if [[ "${1:-}" == "--execute" ]]; then
   LOCAL="${LOCAL_PATH}/"
 
   mkdir -p "$DATA/logs"
-  LOG="$DATA/logs/${DEV_ID}_${PRF_ID}_$(date +%Y%m%d-%H%M%S).log"
+  LOG="$DATA/logs/${DEV_ID}_${PRF_LOG_ID}_$(date +%Y%m%d-%H%M%S).log"
 
   printf '══════════════════════════════\n'
   printf ' Omasync\n'
@@ -222,7 +269,7 @@ if [[ "${1:-}" == "--execute" ]]; then
   echo ""
   if [[ $RC -eq 0 ]]; then
     printf '══ Sync complete ══\n'
-    date -Iseconds > "$DATA/${DEV_ID}_${PRF_ID}.last_sync"
+    date -Iseconds > "$DATA/${DEV_ID}_${PRF_LOG_ID}.last_sync"
     notify-send -a "omasync" "Sync complete" "$DEVICE_NAME / $PROFILE_NAME"
   else
     printf '══ Sync failed (rsync exit %d) ══\n' "$RC"
@@ -230,7 +277,7 @@ if [[ "${1:-}" == "--execute" ]]; then
   fi
 
   # Keep last 10 logs per pair
-  mapfile -t OLD_LOGS < <(ls -t "$DATA/logs/${DEV_ID}_${PRF_ID}_"*.log 2>/dev/null | tail -n +11) || true
+  mapfile -t OLD_LOGS < <(ls -t "$DATA/logs/${DEV_ID}_${PRF_LOG_ID}_"*.log 2>/dev/null | tail -n +11) || true
   for f in "${OLD_LOGS[@]}"; do rm -f "$f"; done
 
   echo ""; read -rp "Press Enter to close..."
@@ -303,17 +350,17 @@ for f in "$CFG/profiles/${SEL_DEV}-"*.conf; do
   PRF_LABELS+=(" device  $PROFILE_NAME  [$DIRECTION]  $(basename "$LOCAL_PATH")  last: $last")
 done
 
-# Load shared profiles (profiles without DEVICE_ID field)
+# Load shared profiles (profiles without DEVICE_ID field and not a base-only profile)
 for f in "$CFG/profiles/"*.conf; do
   [[ -f "$f" ]] || continue
-  DEVICE_ID=""
+  DEVICE_ID="" REMOTE_PATH=""
   # shellcheck disable=SC1090
   source "$f" 2>/dev/null || continue
-  # Skip if this is a device-scoped profile
+  # Skip device-scoped and base-only profiles (base profiles have no REMOTE_PATH)
   [[ -n "$DEVICE_ID" ]] && continue
+  [[ -z "$REMOTE_PATH" ]] && continue
 
   PROFILE_NAME="" LOCAL_PATH="" DIRECTION=""
-  # Reload to get all fields
   # shellcheck disable=SC1090
   source "$f"
   id="$(basename "$f" .conf)"
@@ -329,6 +376,35 @@ for f in "$CFG/profiles/"*.conf; do
   fi
   PRF_IDS+=("$id")
   PRF_LABELS+=(" shared  $PROFILE_NAME  [$DIRECTION]  $(basename "$LOCAL_PATH")  last: $last")
+done
+
+# Load new-style linked profiles
+for f in "$CFG/links/${SEL_DEV}--"*.conf; do
+  [[ -f "$f" ]] || continue
+  LINK_PROFILE="" REMOTE_PATH=""
+  # shellcheck disable=SC1090
+  source "$f" 2>/dev/null || continue
+  [[ -z "$LINK_PROFILE" ]] && continue
+  base="$CFG/profiles/${LINK_PROFILE}.conf"
+  [[ -f "$base" ]] || continue
+
+  PROFILE_NAME="" LOCAL_PATH="" DIRECTION=""
+  # shellcheck disable=SC1090
+  source "$base"
+  # shellcheck disable=SC1090
+  source "$f"  # apply link overrides (REMOTE_PATH etc.)
+  last="never"
+  lf="$DATA/${SEL_DEV}_${LINK_PROFILE}.last_sync"
+  if [[ -f "$lf" ]]; then
+    ts=$(<"$lf")
+    diff=$(( $(date +%s) - $(date -d "$ts" +%s 2>/dev/null || echo 0) ))
+    if   [[ $diff -lt 60 ]];    then last="just now"
+    elif [[ $diff -lt 3600 ]];  then last="${diff}s ago"
+    elif [[ $diff -lt 86400 ]]; then last="$((diff/3600))h ago"
+    else last="$((diff/86400))d ago"; fi
+  fi
+  PRF_IDS+=("link:${LINK_PROFILE}")
+  PRF_LABELS+=(" linked  $PROFILE_NAME  [$DIRECTION]  $(basename "$LOCAL_PATH") → $(basename "$REMOTE_PATH")  last: $last")
 done
 
 # Add "Run All Syncs" option if we have multiple profiles

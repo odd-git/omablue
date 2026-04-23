@@ -267,18 +267,34 @@ EOF
 add_device_profile() {
   local device_id="$1"
   local DEVICE_TYPE=""
-  # Load device type for defaults
   if [[ -f "$CFG/devices/${device_id}.conf" ]]; then
+    # shellcheck disable=SC1090
     source "$CFG/devices/${device_id}.conf" 2>/dev/null || true
   fi
 
+  # Offer to link an existing base profile first
+  local -a base_ids=()
+  mapfile -t base_ids < <(list_base_profiles 2>/dev/null)
+
+  if [[ ${#base_ids[@]} -gt 0 ]]; then
+    local mode
+    mode=$(printf 'Link existing profile\nCreate new profile\n' | rofi -dmenu -p "Add sync:" \
+      -mesg "Existing profiles share the local path and settings you set once" $T) || return 0
+    [[ -z "$mode" ]] && return 0
+    if [[ "$mode" == "Link existing profile" ]]; then
+      link_profile_to_device "$device_id"
+      return
+    fi
+  fi
+
+  # Full "create new" form
   local name lpath rpath dir excl del
 
-  name=$(input "Profile name" "" "What to call this sync profile (e.g. music, documents, vault)") || return 0
+  name=$(input "Profile name" "" "What to call this sync profile (e.g. vault, music, documents)") || return 0
   [[ -z "$name" ]] && return 0
   local id; id="${device_id}-$(slug "$name")"
 
-  lpath=$(input "Local path" "$HOME/" "Folder on THIS computer (e.g. ~/Music, ~/Documents, ~/Vault)") || return 0
+  lpath=$(input "Local path" "$HOME/" "Folder on THIS computer (e.g. ~/Vault, ~/Music)") || return 0
   [[ -z "$lpath" ]] && return 0
   lpath="${lpath/#\~/$HOME}"
 
@@ -290,11 +306,11 @@ add_device_profile() {
   rpath=$(input "Remote path" "$default_rpath" "Folder on REMOTE device (where files sync to/from)") || return 0
   [[ -z "$rpath" ]] && return 0
 
-  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Sync direction" -mesg "push=upload to device, pull=download from device, both=bidirectional" $T) || return 0
+  dir=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Sync direction" \
+    -mesg "push=upload to device, pull=download from device, both=bidirectional" $T) || return 0
   [[ -z "$dir" ]] && return 0
 
-  excl=$(input "Exclude patterns" "" "Patterns to skip (comma-separated, optional — e.g. *.tmp, .cache, .git)") || true
-
+  excl=$(input "Exclude patterns" "" "Patterns to skip, comma-separated, optional — e.g. *.tmp, .cache, .git") || true
   del=false; ask "Enable --delete? (removes files on destination that don't exist in source)" && del=true || true
 
   cat > "$CFG/profiles/${id}.conf" <<EOF
@@ -306,7 +322,119 @@ RSYNC_EXCLUDE="$excl"
 RSYNC_DELETE="$del"
 DEVICE_ID="$device_id"
 EOF
-  note "Profile saved" "$name  [$dir]  $lpath ↔ $rpath"
+
+  # Offer to also save as a reusable base profile
+  if ask "Save this as a reusable base profile? (lets you link it to other devices later)"; then
+    local base_id; base_id=$(slug "$name")
+    if [[ ! -f "$CFG/profiles/${base_id}.conf" ]]; then
+      save_base_profile_config "$base_id" "$name" "$lpath" "$dir" "$excl" "$del"
+      note "Base profile saved" "$name — link to other devices via Manage Device → Link Profile"
+    fi
+  fi
+
+  note "Sync added" "$name  [$dir]  $lpath ↔ $rpath"
+}
+
+link_profile_to_device() {
+  local device_id="$1"
+  local DEVICE_NAME="" DEVICE_TYPE=""
+  # shellcheck disable=SC1090
+  [[ -f "$CFG/devices/${device_id}.conf" ]] && source "$CFG/devices/${device_id}.conf" 2>/dev/null || true
+
+  local -a base_ids=()
+  mapfile -t base_ids < <(list_base_profiles 2>/dev/null)
+  [[ ${#base_ids[@]} -eq 0 ]] && { err "No base profiles" "Create a profile first via the Profiles menu."; return 0; }
+
+  # Show profiles with their local path
+  local -a labels=()
+  for pid in "${base_ids[@]}"; do
+    local PROFILE_NAME="" LOCAL_PATH="" DIRECTION="push"
+    # shellcheck disable=SC1090
+    source "$CFG/profiles/${pid}.conf" 2>/dev/null || continue
+    labels+=("$PROFILE_NAME  [${DIRECTION}]  ${LOCAL_PATH/#$HOME/~}")
+  done
+
+  local selected
+  selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "Link profile:" \
+    -mesg "Select a profile to link to $DEVICE_NAME — you will set the remote path for this device" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local profile_id=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && profile_id="${base_ids[$i]}" && break
+  done
+  [[ -z "$profile_id" ]] && return 0
+
+  # Check if link already exists
+  if [[ -f "$CFG/links/${device_id}--${profile_id}.conf" ]]; then
+    local REMOTE_PATH=""
+    # shellcheck disable=SC1090
+    source "$CFG/links/${device_id}--${profile_id}.conf" 2>/dev/null || true
+    if ! ask "Link already exists (remote: $REMOTE_PATH). Update it?"; then
+      return 0
+    fi
+  fi
+
+  # Load the base profile to show the local path
+  local PROFILE_NAME="" LOCAL_PATH="" DIRECTION="push" RSYNC_EXCLUDE="" RSYNC_DELETE="false"
+  # shellcheck disable=SC1090
+  source "$CFG/profiles/${profile_id}.conf" 2>/dev/null || true
+
+  local default_rpath
+  case "$DEVICE_TYPE" in
+    termux) default_rpath="/storage/shared/" ;;
+    *)      default_rpath="$HOME/" ;;
+  esac
+  local rpath
+  rpath=$(input "Remote path on $DEVICE_NAME" "$default_rpath" \
+    "Local: $LOCAL_PATH  →  Where should this sync to on $DEVICE_NAME?") || return 0
+  [[ -z "$rpath" ]] && return 0
+
+  # Optional direction override
+  local dir_override=""
+  if ask "Override sync direction? (default: $DIRECTION from base profile)"; then
+    dir_override=$(printf 'push\npull\nboth\n' | rofi -dmenu -p "Direction for $DEVICE_NAME:" \
+      -filter "$DIRECTION" $T) || true
+    [[ "$dir_override" == "$DIRECTION" ]] && dir_override=""
+  fi
+
+  save_link_config "$device_id" "$profile_id" "$rpath" "$dir_override"
+  note "Profile linked" "$PROFILE_NAME → $DEVICE_NAME  [$rpath]"
+}
+
+unlink_profile_from_device() {
+  local device_id="$1"
+  local -a link_ids=()
+  mapfile -t link_ids < <(list_links_for_device "$device_id" 2>/dev/null)
+  [[ ${#link_ids[@]} -eq 0 ]] && { err "No linked profiles" "Nothing to unlink."; return 0; }
+
+  local -a labels=()
+  for pid in "${link_ids[@]}"; do
+    local PROFILE_NAME="" LOCAL_PATH="" REMOTE_PATH=""
+    # shellcheck disable=SC1090
+    source "$CFG/profiles/${pid}.conf" 2>/dev/null || true
+    # shellcheck disable=SC1090
+    source "$CFG/links/${device_id}--${pid}.conf" 2>/dev/null || true
+    labels+=("$PROFILE_NAME  $LOCAL_PATH → $REMOTE_PATH")
+  done
+
+  local selected
+  selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "Unlink profile:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local profile_id=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && profile_id="${link_ids[$i]}" && break
+  done
+  [[ -z "$profile_id" ]] && return 0
+
+  local PROFILE_NAME=""
+  # shellcheck disable=SC1090
+  source "$CFG/profiles/${profile_id}.conf" 2>/dev/null || true
+  ask "Remove link '$PROFILE_NAME' from this device?" || return 0
+
+  rm -f "$CFG/links/${device_id}--${profile_id}.conf"
+  note "Link removed" "$PROFILE_NAME unlinked from this device"
 }
 
 remove_device() {
@@ -397,8 +525,10 @@ device_menu() {
     local choice; choice=$(menu \
       " View Syncs" \
       " Add Sync" \
+      "  Link Profile" \
       "  Edit Sync" \
       "  Remove Sync" \
+      "  Unlink Profile" \
       "  Edit Device" \
       "󰗠 Test Connection" \
       " Deploy SSH Key" \
@@ -407,8 +537,10 @@ device_menu() {
     case "$choice" in
       *"View Syncs"*)      view_device_syncs "$device_id" ;;
       *"Add Sync"*)        add_device_profile "$device_id" ;;
+      *"Link Profile"*)    link_profile_to_device "$device_id" ;;
       *"Edit Sync"*)       edit_device_sync "$device_id" ;;
       *"Remove Sync"*)     remove_device_sync "$device_id" ;;
+      *"Unlink Profile"*)  unlink_profile_from_device "$device_id" ;;
       *"Edit Device"*)     edit_device_config "$device_id" ;;
       *"Test Connection"*) test_conn_device "$device_id" ;;
       *"Deploy SSH Key"*)  deploy_ssh_key_to_device "$device_id" ;;
@@ -420,24 +552,39 @@ device_menu() {
 
 view_device_syncs() {
   local device_id="$1"
-  local DEVICE_NAME
+  local DEVICE_NAME=""
+  # shellcheck disable=SC1090
   [[ -f "$CFG/devices/${device_id}.conf" ]] && source "$CFG/devices/${device_id}.conf" 2>/dev/null || true
 
   local -a lines=()
+
+  # Old-style device-specific profiles
   for f in "$CFG/profiles/${device_id}-"*.conf; do
     [[ -f "$f" ]] || continue
-    local PROFILE_NAME LOCAL_PATH REMOTE_PATH DIRECTION
+    local PROFILE_NAME="" LOCAL_PATH="" REMOTE_PATH="" DIRECTION=""
     # shellcheck disable=SC1090
     source "$f"
-    lines+=(" $PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH ↔ $REMOTE_PATH")
+    lines+=("[sync]  $PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH ↔ $REMOTE_PATH")
+  done
+
+  # New-style links
+  local -a link_ids=()
+  mapfile -t link_ids < <(list_links_for_device "$device_id" 2>/dev/null)
+  for pid in "${link_ids[@]}"; do
+    local PROFILE_NAME="" LOCAL_PATH="" REMOTE_PATH="" DIRECTION="push"
+    # shellcheck disable=SC1090
+    source "$CFG/profiles/${pid}.conf" 2>/dev/null || continue
+    # shellcheck disable=SC1090
+    source "$CFG/links/${device_id}--${pid}.conf" 2>/dev/null || continue
+    lines+=("[link]  $PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH ↔ $REMOTE_PATH")
   done
 
   if [[ ${#lines[@]} -eq 0 ]]; then
-    err "No syncs" "Use Add Sync to create one."
+    err "No syncs" "Use Add Sync or Link Profile to set one up."
     return 0
   fi
 
-  printf '%s\n' "${lines[@]}" | rofi -dmenu -p " Syncs for $DEVICE_NAME:" -mesg "View syncs (read-only)" $T || true
+  printf '%s\n' "${lines[@]}" | rofi -dmenu -p " Syncs for $DEVICE_NAME:" -mesg "Read-only view" $T || true
 }
 
 edit_device_sync() {
@@ -528,6 +675,161 @@ edit_device_config() {
 
   sed -i "s|DEVICE_HOST=.*|DEVICE_HOST=\"$h\"|; s|DEVICE_PORT=.*|DEVICE_PORT=\"$p\"|; s|DEVICE_USER=.*|DEVICE_USER=\"$u\"|" "$CFG/devices/${device_id}.conf"
   note "Device updated" "$DEVICE_NAME"
+}
+
+# ── BASE PROFILES (reusable templates: local path + options, no remote path) ───
+
+profiles_menu() {
+  while true; do
+    TITLE="Profiles"
+    local choice; choice=$(menu \
+      " Create Profile" \
+      "  Edit Profile" \
+      "  Remove Profile" \
+      " List Profiles" \
+      "󰌾 Back") || return 0
+    case "$choice" in
+      *"Create Profile"*) create_base_profile ;;
+      *"Edit Profile"*)   edit_base_profile ;;
+      *"Remove Profile"*) remove_base_profile ;;
+      *"List Profiles"*)  list_base_profiles_view ;;
+      *"Back"*)           return 0 ;;
+      "")                 return 0 ;;
+    esac
+  done
+}
+
+create_base_profile() {
+  local name lpath dir excl del
+
+  name=$(input "Profile name" "" "Short name for this sync source (e.g. vault, music, documents)") || return 0
+  [[ -z "$name" ]] && return 0
+  local id; id=$(slug "$name")
+
+  if [[ -f "$CFG/profiles/${id}.conf" ]]; then
+    local existing_dev_id=""
+    # shellcheck disable=SC1090
+    source "$CFG/profiles/${id}.conf" 2>/dev/null || true
+    if [[ -n "$existing_dev_id" ]]; then
+      err "Name conflict" "A device-specific profile named '$id' already exists. Choose a different name."
+      return 0
+    fi
+    ask "Profile '$name' already exists. Overwrite it?" || return 0
+  fi
+
+  lpath=$(input "Local path" "$HOME/" "Folder on THIS computer to sync (e.g. ~/Vault, ~/Music)") || return 0
+  [[ -z "$lpath" ]] && return 0
+  lpath="${lpath/#\~/$HOME}"
+
+  dir=$(printf 'both\npush\npull\n' | rofi -dmenu -p "Default sync direction" \
+    -mesg "push=upload, pull=download, both=bidirectional — can be overridden per device" $T) || return 0
+  [[ -z "$dir" ]] && return 0
+
+  excl=$(input "Exclude patterns" "" "Comma-separated, optional — e.g. .git, .cache, *.tmp") || true
+  del=false; ask "Enable --delete by default? (removes files on dest not in source)" && del=true || true
+
+  save_base_profile_config "$id" "$name" "$lpath" "$dir" "$excl" "$del"
+  note "Profile created" "$name  [$dir]  $lpath — link it to devices via Manage Device → Link Profile"
+}
+
+edit_base_profile() {
+  local -a base_ids=()
+  mapfile -t base_ids < <(list_base_profiles 2>/dev/null)
+  [[ ${#base_ids[@]} -eq 0 ]] && { err "No base profiles" "Create one first."; return 0; }
+
+  local -a labels=()
+  for pid in "${base_ids[@]}"; do
+    local PROFILE_NAME="" LOCAL_PATH="" DIRECTION="push"
+    # shellcheck disable=SC1090
+    source "$CFG/profiles/${pid}.conf" 2>/dev/null || continue
+    labels+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH")
+  done
+
+  local selected; selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "  Edit profile:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local profile_id=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && profile_id="${base_ids[$i]}" && break
+  done
+  [[ -z "$profile_id" ]] && return 0
+
+  local PROFILE_NAME="" LOCAL_PATH="" DIRECTION="push" RSYNC_EXCLUDE="" RSYNC_DELETE="false"
+  # shellcheck disable=SC1090
+  source "$CFG/profiles/${profile_id}.conf" 2>/dev/null || true
+
+  local l d e
+  l=$(input "Local path:" "$LOCAL_PATH")
+  [[ -z "$l" ]] && l="$LOCAL_PATH"
+  l="${l/#\~/$HOME}"
+  d=$(printf 'both\npush\npull\n' | rofi -dmenu -p "Direction:" -filter "$DIRECTION" $T) || return 0
+  [[ -z "$d" ]] && d="$DIRECTION"
+  e=$(input "Exclude patterns:" "$RSYNC_EXCLUDE") || true
+  [[ -z "$e" ]] && e="$RSYNC_EXCLUDE"
+
+  save_base_profile_config "$profile_id" "$PROFILE_NAME" "$l" "$d" "$e" "$RSYNC_DELETE"
+  note "Profile updated" "$PROFILE_NAME"
+}
+
+remove_base_profile() {
+  local -a base_ids=()
+  mapfile -t base_ids < <(list_base_profiles 2>/dev/null)
+  [[ ${#base_ids[@]} -eq 0 ]] && { err "No base profiles" "Nothing to remove."; return 0; }
+
+  local -a labels=()
+  for pid in "${base_ids[@]}"; do
+    local PROFILE_NAME="" LOCAL_PATH="" DIRECTION="push"
+    # shellcheck disable=SC1090
+    source "$CFG/profiles/${pid}.conf" 2>/dev/null || continue
+    labels+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH")
+  done
+
+  local selected; selected=$(printf '%s\n' "${labels[@]}" | rofi -dmenu -p "  Remove profile:" $T) || return 0
+  [[ -z "$selected" ]] && return 0
+
+  local profile_id=""
+  for i in "${!labels[@]}"; do
+    [[ "${labels[$i]}" == "$selected" ]] && profile_id="${base_ids[$i]}" && break
+  done
+  [[ -z "$profile_id" ]] && return 0
+
+  local PROFILE_NAME=""
+  # shellcheck disable=SC1090
+  source "$CFG/profiles/${profile_id}.conf" 2>/dev/null || true
+
+  # Warn if any links reference this profile
+  local -a linked_devs=()
+  for f in "$CFG/links/"*"--${profile_id}.conf"; do
+    [[ -f "$f" ]] && linked_devs+=("$(basename "$f" ".conf" | sed "s/--${profile_id}//")")
+  done
+  if [[ ${#linked_devs[@]} -gt 0 ]]; then
+    local msg="${#linked_devs[@]} device(s) still linked: ${linked_devs[*]}. Links will break."
+    ask "Remove '$PROFILE_NAME'? $msg" || return 0
+  else
+    ask "Remove base profile '$PROFILE_NAME'? Cannot be undone." || return 0
+  fi
+
+  rm -f "$CFG/profiles/${profile_id}.conf"
+  note "Profile removed" "$PROFILE_NAME"
+}
+
+list_base_profiles_view() {
+  local -a base_ids=()
+  mapfile -t base_ids < <(list_base_profiles 2>/dev/null)
+  [[ ${#base_ids[@]} -eq 0 ]] && { err "No base profiles" "Create one first."; return 0; }
+
+  local -a lines=()
+  for pid in "${base_ids[@]}"; do
+    local PROFILE_NAME="" LOCAL_PATH="" DIRECTION="push"
+    # shellcheck disable=SC1090
+    source "$CFG/profiles/${pid}.conf" 2>/dev/null || continue
+    # Count links for this profile
+    local link_count=0
+    for f in "$CFG/links/"*"--${pid}.conf"; do [[ -f "$f" ]] && ((link_count++)) || true; done
+    lines+=("$PROFILE_NAME  [$DIRECTION]  $LOCAL_PATH  (linked to $link_count device(s))")
+  done
+
+  printf '%s\n' "${lines[@]}" | rofi -dmenu -p " Base Profiles:" $T || true
 }
 
 # ── SHARED PROFILES (global profiles without device scope) ─────────────────────
@@ -685,12 +987,14 @@ while true; do
   CHOICE=$(menu \
     " Add Device" \
     " Manage Device" \
+    " Profiles" \
     " Shared Profiles" \
     "󰗠 Test Connection") || exit 0
 
   case "$CHOICE" in
     *"Add Device"*)      add_device ;;
     *"Manage Device"*)   manage_device ;;
+    *"Profiles"*)        profiles_menu ;;
     *"Shared Profiles"*) shared_profiles_menu ;;
     *"Test Connection"*) test_conn ;;
     "") exit 0 ;;

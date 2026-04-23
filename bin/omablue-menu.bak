@@ -1,0 +1,138 @@
+#!/bin/bash
+set -euo pipefail
+
+# --- 1. Global Environment & Path Injection ---
+# We force Homebrew and local bins into the PATH so the menu and its children see them.
+HOMEBREW_PATHS="/home/linuxbrew/.linuxbrew/bin:/var/home/linuxbrew/.linuxbrew/bin"
+LOCAL_PATHS="$HOME/.local/bin:$HOME/.local/share/omablue/bin"
+export PATH="$HOMEBREW_PATHS:$LOCAL_PATHS:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$OMABIN:$PATH"
+
+TERMINAL="foot"
+TUI_CLASS="omablue-floating"
+
+BACK_TO_EXIT=false
+[[ -n "${1-}" ]] && BACK_TO_EXIT=true
+
+# --- 2. Core Functions ---
+
+back_to() {
+  if [[ "$BACK_TO_EXIT" == "true" ]]; then
+    exit 0
+  else
+    show_main_menu
+  fi
+}
+
+menu() {
+  local prompt="$1"
+  shift
+  local options
+  options=$(printf "%s\n" "$@")
+  local selection
+  selection=$(echo -e "$options" | rofi -dmenu -i -p "$prompt" -theme my_theme.rasi) || exit 0
+  echo "$selection"
+}
+
+run_tui() {
+  local script_path="$1"
+  local UNIQUE_TITLE="OMABLUE_POPUP"
+
+  if [[ -x "$script_path" ]]; then
+    # If script uses GUM or does NOT use ROFI, FORCE the terminal
+    if grep -q "gum" "$script_path" || ! grep -q "rofi" "$script_path"; then
+
+      # FIXED: 'foot' uses --app-id instead of --class
+      # We remove '-e' as foot accepts the command as the last arguments
+      nohup "$TERMINAL" \
+        --app-id="$TUI_CLASS" \
+        --title="$UNIQUE_TITLE" \
+        /bin/bash -l -c "$script_path" >/dev/null 2>&1 &
+
+    else
+      # If it is a pure ROFI app, launch directly
+      nohup "$script_path" >/dev/null 2>&1 &
+    fi
+    # Do not exit immediately to keep menu flow if desired
+    # exit 0
+  else
+    notify-send -u critical "Error" "Script not found: $(basename "$script_path")"
+  fi
+}
+# --- 3. Submenus ---
+
+show_install_menu() {
+  local choice
+  choice=$(menu "Install" "󰖟 Webapp" " Brew" " Ujust" "󰆍 Tui" " Flatpak")
+  case "${choice,,}" in
+  *webapp*) run_tui "$OMABIN/omablue-webapp-install" ;;
+  *brew*) run_tui "$OMABIN/omablue-brew-install" ;;
+  *ujust*) run_tui "$OMABIN/omablue-install-ujust" ;;
+  *tui*) run_tui "$OMABIN/omablue-tui-install" ;;
+  *flatpak*) run_tui "$OMABIN/omablue-flatpak-install" ;;
+  *) back_to ;;
+  esac
+}
+
+show_remove_menu() {
+  local choice
+  choice=$(menu "Remove" "󰖟 Webapp" " Brew" "󰆍 Tui" " Flatpak")
+  case "${choice,,}" in
+  *webapp*) run_tui "$OMABIN/omablue-webapp-remove" ;;
+  *brew*) run_tui "$OMABIN/omablue-brew-remove" ;;
+  *tui*) run_tui "$OMABIN/omablue-tui-remove" ;;
+  *flatpak*) run_tui "$OMABIN/omablue-flatpak-remove" ;;
+  *) back_to ;;
+  esac
+}
+
+show_setup_menu() {
+  local choice
+  choice=$(menu "Setup" "󱓞 Theme" "󰂯 Bluetooth" "󰓃 Mixer" "󰖩 Network" "󰒍 Sync Setup" " Sync")
+  case "${choice,,}" in
+  *theme*) run_tui "$OMABIN/omablue-theme-selector" ;;
+  *bluetooth*) run_tui "$OMABIN/omablue-bluetooth" ;;
+  *mixer*) run_tui "$OMABIN/omablue-mixer" ;;
+  *network*) run_tui "$OMABIN/omablue-nmcli" ;;
+  *sync\ setup*) run_tui "$OMABIN/omasync-setup" ;;
+  *sync*) run_tui "$OMABIN/omasync" ;;
+  *) back_to ;;
+  esac
+}
+
+show_system_menu() {
+  local choice
+  choice=$(menu "System" " Lock" "󰜉 Restart" "󰐥 Shutdown")
+  case "${choice,,}" in
+  *lock*) swaylock ;;
+  *restart*)
+    CONFIRM=$(echo -e "Yes\nNo" | rofi -dmenu -p "Confirm Reboot?" -i) || true
+    [[ "$CONFIRM" == "Yes" ]] && systemctl reboot
+    ;;
+  *shutdown*)
+    CONFIRM=$(echo -e "Yes\nNo" | rofi -dmenu -p "Confirm Shutdown?" -i) || true
+    [[ "$CONFIRM" == "Yes" ]] && systemctl poweroff
+    ;;
+  *) back_to ;;
+  esac
+}
+
+# --- 4. Main Menu ---
+# Note: show_main_menu and back_to use recursive calls; safe for interactive use
+
+show_main_menu() {
+  local choice
+  choice=$(menu "Go" "󰀻 Apps" "󰐕 Install" "󰛌 Remove" " Setup" " System")
+  case "${choice,,}" in
+  *apps*) rofi -show drun -no-show-icons -theme my_theme.rasi ;;
+  *install*) show_install_menu ;;
+  *remove*) show_remove_menu ;;
+  *setup*) show_setup_menu ;;
+  *system*) show_system_menu ;;
+  *) [[ -n "$choice" ]] && show_main_menu ;;
+  esac
+}
+
+show_main_menu

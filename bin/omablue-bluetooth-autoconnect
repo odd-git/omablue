@@ -1,0 +1,275 @@
+#!/bin/bash
+set -euo pipefail
+# Omablue Bluetooth Auto-Connect - Secureblue Edition
+# Automatically connects to trusted Bluetooth devices when discovered
+
+# Secure PATH
+PATH="/usr/bin:/usr/local/bin:/bin"
+
+# Configuration (can be overridden by config file)
+NOTIFY_ON_CONNECT=true
+NOTIFY_ON_FAILURE=false
+FLAG_DIR="$XDG_RUNTIME_DIR"
+FLAG_PREFIX="omablue_bt_autoconnect_"
+RETRY_INTERVAL=300  # 5 minutes before retrying failed connection
+SWITCH_AUDIO=true   # Auto-switch audio output to connected Bluetooth device
+POST_CONNECT_WAIT=12  # Seconds to wait after connect command before declaring failure
+POST_CONNECT_POLL=2   # Seconds between each poll during grace window
+
+# Load config safely (only known keys, no arbitrary code execution)
+CONFIG_FILE="${XDG_CONFIG_HOME:-$HOME/.config}/omablue/bluetooth-autoconnect.conf"
+if [[ -f "$CONFIG_FILE" ]]; then
+  while IFS='=' read -r key value; do
+    # Skip comments and blank lines
+    [[ -z "$key" || "$key" =~ ^[[:space:]]*# ]] && continue
+    # Trim whitespace
+    key=$(echo "$key" | xargs)
+    value=$(echo "$value" | xargs)
+    case "$key" in
+      NOTIFY_ON_CONNECT)  [[ "$value" =~ ^(true|false)$ ]] && NOTIFY_ON_CONNECT="$value" ;;
+      NOTIFY_ON_FAILURE)  [[ "$value" =~ ^(true|false)$ ]] && NOTIFY_ON_FAILURE="$value" ;;
+      RETRY_INTERVAL)     [[ "$value" =~ ^[0-9]+$ ]]       && RETRY_INTERVAL="$value" ;;
+      SWITCH_AUDIO)       [[ "$value" =~ ^(true|false)$ ]] && SWITCH_AUDIO="$value" ;;
+      POST_CONNECT_WAIT)  [[ "$value" =~ ^[0-9]+$ ]]       && POST_CONNECT_WAIT="$value" ;;
+      POST_CONNECT_POLL)  [[ "$value" =~ ^[0-9]+$ ]]       && POST_CONNECT_POLL="$value" ;;
+    esac
+  done < "$CONFIG_FILE"
+fi
+
+# Dependency check
+check_dependencies() {
+  for cmd in bluetoothctl; do
+    if ! command -v "$cmd" &>/dev/null; then
+      echo "Error: $cmd is required but not installed." >&2
+      exit 1
+    fi
+  done
+}
+
+# Secure notification function
+notify_bt() {
+  local message="$1"
+  local urgency="${2:-normal}"
+
+  if ! command -v notify-send &>/dev/null; then
+    return 0
+  fi
+
+  notify-send -a "Bluetooth" -i bluetooth-symbolic -u "$urgency" "$message" \
+    -h string:x-dunst-stack-tag:bt-autoconnect 2>/dev/null || true
+}
+
+# Check if Bluetooth is powered on
+is_bluetooth_on() {
+  bluetoothctl show 2>/dev/null | grep -q "Powered: yes"
+}
+
+# Check if Bluetooth adapter exists
+check_bluetooth_adapter() {
+  if ! bluetoothctl list 2>/dev/null | grep -q "Controller"; then
+    exit 0  # Silent exit if no adapter
+  fi
+}
+
+# Check if device is connected
+is_device_connected() {
+  local mac="$1"
+  bluetoothctl info "$mac" 2>/dev/null | grep -q "Connected: yes"
+}
+
+# Check if device is trusted
+is_device_trusted() {
+  local mac="$1"
+  bluetoothctl info "$mac" 2>/dev/null | grep -q "Trusted: yes"
+}
+
+# Get flag file path for device
+get_flag_file() {
+  local mac="$1"
+  # Sanitize MAC address for filename (replace : with _)
+  local safe_mac="${mac//:/_}"
+  echo "${FLAG_DIR}/${FLAG_PREFIX}${safe_mac}"
+}
+
+# Check if we should attempt connection (not attempted recently)
+should_attempt_connection() {
+  local mac="$1"
+  local flag_file
+  flag_file=$(get_flag_file "$mac")
+
+  # If flag doesn't exist, we should attempt
+  if [[ ! -f "$flag_file" ]]; then
+    return 0
+  fi
+
+  # Check if flag is old enough (based on retry interval)
+  local flag_age
+  flag_age=$(( $(date +%s) - $(stat -c %Y "$flag_file" 2>/dev/null || echo 0) ))
+
+  if [[ "$flag_age" -gt "$RETRY_INTERVAL" ]]; then
+    # Flag is old, remove it and allow retry
+    rm -f "$flag_file" 2>/dev/null || true
+    return 0
+  fi
+
+  return 1
+}
+
+# Set connection attempt flag (to prevent rapid retries)
+set_connection_flag() {
+  local mac="$1"
+  local flag_file
+  flag_file=$(get_flag_file "$mac")
+  touch "$flag_file" 2>/dev/null || true
+}
+
+# Clear connection flag (successful connection)
+clear_connection_flag() {
+  local mac="$1"
+  local flag_file
+  flag_file=$(get_flag_file "$mac")
+  rm -f "$flag_file" 2>/dev/null || true
+}
+
+# Clean up stale flag files on startup
+cleanup_stale_flags() {
+  # Remove flags older than 10 minutes (2x retry interval)
+  find "$FLAG_DIR" -name "${FLAG_PREFIX}*" -type f -mmin +10 -delete 2>/dev/null || true
+}
+
+# Get device name from MAC
+get_device_name() {
+  local mac="$1"
+  local name
+  name=$(bluetoothctl info "$mac" 2>/dev/null | grep "Name:" | cut -d':' -f2- | xargs || echo "")
+
+  if [[ -z "$name" ]]; then
+    echo "$mac"
+  else
+    echo "$name"
+  fi
+}
+
+# Switch audio output to a Bluetooth device's PipeWire sink
+switch_audio_to_device() {
+  local mac="$1"
+
+  if [[ "$SWITCH_AUDIO" != "true" ]]; then
+    return 0
+  fi
+
+  # pw-dump, jq, and wpctl are needed for audio switching
+  if ! command -v pw-dump &>/dev/null || ! command -v wpctl &>/dev/null || ! command -v jq &>/dev/null; then
+    return 0
+  fi
+
+  # Wait for PipeWire to register the Bluetooth sink, retrying up to 5 times
+  local attempt sink_id=""
+  for attempt in 1 2 3 4 5; do
+    [[ "$attempt" -gt 1 ]] && sleep 3   # only sleep on retries
+
+    # Step 1: Find the PipeWire device ID for this BT MAC address
+    local dev_id
+    dev_id=$(pw-dump 2>/dev/null \
+      | jq -r --arg addr "$mac" '.[] | select(.type == "PipeWire:Interface:Device" and .info.props."api.bluez5.address" == $addr) | .id' \
+      | head -n1) || continue
+
+    [[ -z "$dev_id" ]] && continue
+
+    # Step 2: Find the Audio/Sink node that references this device
+    sink_id=$(pw-dump 2>/dev/null \
+      | jq -r --argjson devid "$dev_id" '.[] | select(.info.props."media.class" == "Audio/Sink" and .info.props."device.id" == $devid) | .id' \
+      | head -n1) || continue
+
+    [[ -n "$sink_id" ]] && break
+  done
+
+  if [[ -n "$sink_id" ]]; then
+    wpctl set-default "$sink_id" 2>/dev/null && return 0
+  fi
+
+  return 1
+}
+
+# Attempt to connect to device
+connect_device() {
+  local mac="$1"
+  local name
+  name=$(get_device_name "$mac")
+
+  # Fire connect command — exit code is NOT authoritative on secureblue/BlueZ 5.86
+  # (DBus handshake is async; bluetoothctl exits before connection completes)
+  timeout 15s bluetoothctl connect "$mac" &>/dev/null || true
+
+  # Grace poll: check authoritative BlueZ state up to POST_CONNECT_WAIT seconds
+  local waited=0
+  while [[ "$waited" -lt "$POST_CONNECT_WAIT" ]]; do
+    if is_device_connected "$mac"; then
+      switch_audio_to_device "$mac"
+      [[ "$NOTIFY_ON_CONNECT" == "true" ]] && notify_bt "󰂱 Auto-connected: ${name}"
+      clear_connection_flag "$mac"
+      return 0
+    fi
+    sleep "$POST_CONNECT_POLL"
+    (( waited += POST_CONNECT_POLL ))
+  done
+
+  # Authoritative failure: device still not connected after grace window
+  set_connection_flag "$mac"
+  [[ "$NOTIFY_ON_FAILURE" == "true" ]] && notify_bt "Failed to auto-connect: ${name}" "low"
+  return 1
+}
+
+# Main execution
+main() {
+  check_dependencies
+  check_bluetooth_adapter
+
+  # Exit if Bluetooth is powered off
+  if ! is_bluetooth_on; then
+    exit 0
+  fi
+
+  # Clean up old flags on startup
+  cleanup_stale_flags
+
+  # Get list of paired devices
+  local paired_devices
+  paired_devices=$(bluetoothctl devices Paired 2>/dev/null | grep -oE '([0-9A-Fa-f]{2}:){5}[0-9A-Fa-f]{2}' || echo "")
+
+  # Exit if no paired devices
+  if [[ -z "$paired_devices" ]]; then
+    exit 0
+  fi
+
+  # Process each paired device
+  while IFS= read -r mac; do
+    [[ -z "$mac" ]] && continue
+
+    # Skip if already connected
+    if is_device_connected "$mac"; then
+      # Clear flag if device is connected (manual connection or previous auto-connect)
+      clear_connection_flag "$mac"
+      continue
+    fi
+
+    # Only auto-connect to trusted devices
+    if ! is_device_trusted "$mac"; then
+      continue
+    fi
+
+    # Skip if we recently attempted connection
+    if ! should_attempt_connection "$mac"; then
+      continue
+    fi
+
+    # Attempt to connect
+    connect_device "$mac" &
+
+  done <<< "$paired_devices"
+
+  # Wait for all background connection attempts to complete
+  wait
+}
+
+main "$@"
