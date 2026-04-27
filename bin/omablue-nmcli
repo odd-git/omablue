@@ -101,35 +101,141 @@ manage_hotspot() {
   esac
 }
 
+get_vpn_status() {
+  local provider="$1"
+  case "$provider" in
+    tailscale)
+      if tailscale status --json 2>/dev/null | awk -F'"' '/"BackendState"/{exit ($4=="Running")?0:1}'; then
+        local ip=$(tailscale ip 2>/dev/null | head -1 || echo "?")
+        echo "✓ ($ip)"
+      else
+        echo "✗"
+      fi
+      ;;
+    mullvad)
+      if command -v mullvad &>/dev/null && mullvad status 2>/dev/null | grep -q "Connected"; then
+        echo "✓"
+      else
+        echo "✗"
+      fi
+      ;;
+    protonvpn)
+      if pgrep -f "protonvpn-app" &>/dev/null; then
+        echo "✓ running"
+      else
+        echo "✗"
+      fi
+      ;;
+    ivpn)
+      if command -v ivpn &>/dev/null && ivpn status 2>/dev/null | grep -q -i "connected"; then
+        echo "✓"
+      else
+        echo "✗"
+      fi
+      ;;
+  esac
+}
+
+detect_installed_vpns() {
+  local vpns=()
+  command -v tailscale &>/dev/null && vpns+=("tailscale")
+  command -v mullvad &>/dev/null && vpns+=("mullvad")
+  command -v protonvpn-app &>/dev/null && vpns+=("protonvpn")
+  command -v ivpn &>/dev/null && vpns+=("ivpn")
+  printf '%s\n' "${vpns[@]}"
+}
+
+get_vpn_name() {
+  local provider="$1"
+  case "$provider" in
+    tailscale) echo "Tailscale" ;;
+    mullvad) echo "Mullvad" ;;
+    protonvpn) echo "ProtonVPN" ;;
+    ivpn) echo "IVPN" ;;
+    *) echo "$provider" ;;
+  esac
+}
+
 manage_vpn() {
-  local tailscale_bin="$SCRIPT_DIR/omablue-tailscale"
-  if [ ! -x "$tailscale_bin" ]; then
-    tailscale_bin=$(command -v omablue-tailscale 2>/dev/null || true)
+  local vpn_bin="$SCRIPT_DIR/omablue-vpn"
+  if [ ! -x "$vpn_bin" ]; then
+    vpn_bin=$(command -v omablue-vpn 2>/dev/null || true)
   fi
 
-  if [ -z "$tailscale_bin" ]; then
-    notify-send -u critical -a "Network" "VPN" "omablue-tailscale not found"
+  local installed_vpns
+  installed_vpns=$(detect_installed_vpns)
+
+  if [ -z "$installed_vpns" ]; then
+    notify-send -u critical -a "Network" "VPN" "No VPN providers found"
     return
   fi
 
-  local status_label
-  if tailscale status --json 2>/dev/null | awk -F'"' '/"BackendState"/{exit ($4=="Running")?0:1}'; then
-    local ts_ip
-    ts_ip=$(tailscale ip 2>/dev/null | head -1 || echo "?")
-    status_label="Connesso ($ts_ip)"
-  else
-    status_label="Disconnesso"
+  if [ -z "$vpn_bin" ]; then
+    # Fallback to old tailscale script if omablue-vpn not available
+    local tailscale_bin="$SCRIPT_DIR/omablue-tailscale"
+    if [ ! -x "$tailscale_bin" ]; then
+      tailscale_bin=$(command -v omablue-tailscale 2>/dev/null || true)
+    fi
+
+    if [ -z "$tailscale_bin" ]; then
+      notify-send -u critical -a "Network" "VPN" "VPN scripts not found"
+      return
+    fi
+
+    if command -v tailscale &>/dev/null; then
+      local status_label
+      if tailscale status --json 2>/dev/null | awk -F'"' '/"BackendState"/{exit ($4=="Running")?0:1}'; then
+        local ts_ip=$(tailscale ip 2>/dev/null | head -1 || echo "?")
+        status_label="Connected ($ts_ip)"
+      else
+        status_label="Disconnected"
+      fi
+      local VPN_OPTIONS="󰦝 Toggle Tailscale  [$status_label]"
+      local SEL
+      SEL=$(echo -e "$VPN_OPTIONS" | rofi -dmenu -p "VPN" -i -width 35 -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
+      case "$SEL" in
+        *"Toggle Tailscale"*)
+          "$tailscale_bin" toggle
+          ;;
+      esac
+    fi
+    return
   fi
 
-  local VPN_OPTIONS="󰦝 Toggle Tailscale  [$status_label]"
-  local SEL
-  SEL=$(echo -e "$VPN_OPTIONS" | rofi -dmenu -p "VPN" -i -width 35 -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
+  # Build VPN options menu with status
+  local VPN_OPTIONS=""
+  while IFS= read -r vpn; do
+    local name=$(get_vpn_name "$vpn")
+    local status=$(get_vpn_status "$vpn")
+    if [ -z "$VPN_OPTIONS" ]; then
+      VPN_OPTIONS="󰦝 Toggle $name  [$status]"
+    else
+      VPN_OPTIONS="$VPN_OPTIONS\n󰦝 Toggle $name  [$status]"
+    fi
+  done <<< "$installed_vpns"
 
-  case "$SEL" in
-  *"Toggle Tailscale"*)
-    "$tailscale_bin" toggle
-    ;;
-  esac
+  local SEL
+  SEL=$(echo -e "$VPN_OPTIONS" | rofi -dmenu -p "VPN" -i -width 40 -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
+
+  if [ -z "$SEL" ]; then
+    return
+  fi
+
+  # Extract provider from selection
+  local selected_vpn=""
+  if echo "$SEL" | grep -q "Tailscale"; then
+    selected_vpn="tailscale"
+  elif echo "$SEL" | grep -q "Mullvad"; then
+    selected_vpn="mullvad"
+  elif echo "$SEL" | grep -q "ProtonVPN"; then
+    selected_vpn="protonvpn"
+  elif echo "$SEL" | grep -q "IVPN"; then
+    selected_vpn="ivpn"
+  fi
+
+  if [ -n "$selected_vpn" ]; then
+    "$vpn_bin" "$selected_vpn" toggle
+  fi
 }
 
 # Main Menu
@@ -140,7 +246,7 @@ case "$CHOSEN" in
 *Connect)
   # Rescan for fresh network list
   nmcli device wifi rescan 2>/dev/null || true
-  sleep 1  # Brief pause for scan to complete
+  sleep 1 # Brief pause for scan to complete
 
   # Fetch list with bars and security status
   WIFI_LIST=$(nmcli --terse --fields "SSID,BARS,SECURITY" device wifi list | awk -F: '$1 != "" {print $1 " | " $2 " | " $3}' | sort -u -t'|' -k1,1)

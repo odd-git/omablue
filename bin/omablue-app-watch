@@ -1,0 +1,51 @@
+#!/usr/bin/env bash
+# Watches for Sway window close events and triggers configured actions.
+# Usage: omablue-app-watch
+# Config: ~/.config/omablue/app-watch/*.conf
+# Each conf defines: APP_ID, ACTION (a shell command to run on close)
+
+set -euo pipefail
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$OMABIN:/home/linuxbrew/.linuxbrew/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+CFG="${XDG_CONFIG_HOME:-$HOME/.config}/omablue/app-watch"
+
+command -v swaymsg &>/dev/null || { echo "swaymsg not found"; exit 1; }
+command -v jq &>/dev/null || { echo "jq not found"; exit 1; }
+
+mkdir -p "$CFG"
+
+declare -A WATCH_MAP  # app_id → action
+
+load_config() {
+  for f in "$CFG"/*.conf; do
+    [[ -f "$f" ]] || continue
+    APP_ID="" ACTION=""
+    # shellcheck disable=SC1090
+    source "$f"
+    [[ -n "$APP_ID" && -n "$ACTION" ]] || continue
+    WATCH_MAP["$APP_ID"]="$ACTION"
+  done
+}
+
+load_config
+
+if [[ ${#WATCH_MAP[@]} -eq 0 ]]; then
+  echo "No app-watch configs found in $CFG"
+  exit 0
+fi
+
+swaymsg -t subscribe '["window"]' -m | while read -r line; do
+  change=$(echo "$line" | jq -r '.change // empty' 2>/dev/null) || continue
+  [[ "$change" == "close" ]] || continue
+
+  app_id=$(echo "$line" | jq -r '.container.app_id // empty' 2>/dev/null) || continue
+  [[ -n "$app_id" ]] || continue
+
+  if [[ -v WATCH_MAP["$app_id"] ]]; then
+    action="${WATCH_MAP[$app_id]}"
+    notify-send -u low "omablue" "$app_id closed — running sync" 2>/dev/null || true
+    eval "$action" &
+  fi
+done

@@ -1,0 +1,341 @@
+#!/usr/bin/env bash
+#
+# omablue-vpn - Toggle VPN connection for multiple providers
+# Supports: Tailscale, Mullvad, ProtonVPN, IVPN
+# Usage: omablue-vpn [provider] [on|off|toggle|status]
+#
+
+set -euo pipefail
+PATH="/usr/bin:/usr/local/bin:/bin:/sbin"
+
+PROVIDER="${1:-}"
+ACTION="${2:-toggle}"
+
+# Detect available VPN providers
+detect_vpn_provider() {
+    local provider="$1"
+    case "$provider" in
+        tailscale)
+            command -v tailscale &>/dev/null && return 0 || return 1
+            ;;
+        mullvad)
+            command -v mullvad &>/dev/null && return 0 || return 1
+            ;;
+        proton|protonvpn)
+            command -v protonvpn-app &>/dev/null && return 0 || return 1
+            ;;
+        ivpn)
+            command -v ivpn &>/dev/null && return 0 || return 1
+            ;;
+    esac
+    return 1
+}
+
+# Get list of installed VPN providers
+get_installed_vpns() {
+    local vpns=()
+    detect_vpn_provider "tailscale" && vpns+=("tailscale")
+    detect_vpn_provider "mullvad" && vpns+=("mullvad")
+    detect_vpn_provider "protonvpn" && vpns+=("protonvpn")
+    detect_vpn_provider "ivpn" && vpns+=("ivpn")
+    printf '%s\n' "${vpns[@]}"
+}
+
+# === TAILSCALE ===
+tailscale_is_connected() {
+    local state
+    state=$(tailscale status --json 2>/dev/null | awk -F'"' '/"BackendState"/{print $4}')
+    [[ "$state" == "Running" ]]
+}
+
+tailscale_on() {
+    if tailscale_is_connected; then
+        echo "Tailscale already connected"
+        notify-send -a "Omablue" "Tailscale" "Already connected" -i network-vpn 2>/dev/null || true
+        return 0
+    fi
+    echo "Connecting to Tailscale..."
+    if tailscale up 2>&1; then
+        notify-send -a "Omablue" "Tailscale" "VPN connected" -i network-vpn 2>/dev/null || true
+        echo "Tailscale connected"
+    else
+        notify-send -a "Omablue" "Tailscale" "Failed to connect" -i network-vpn-disconnected 2>/dev/null || true
+        echo "Error: failed to connect to Tailscale" >&2
+        return 1
+    fi
+}
+
+tailscale_off() {
+    if ! tailscale_is_connected; then
+        echo "Tailscale already disconnected"
+        notify-send -a "Omablue" "Tailscale" "Already disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        return 0
+    fi
+    echo "Disconnecting from Tailscale..."
+    if tailscale down 2>&1; then
+        notify-send -a "Omablue" "Tailscale" "VPN disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        echo "Tailscale disconnected"
+    else
+        notify-send -a "Omablue" "Tailscale" "Failed to disconnect" -i network-error 2>/dev/null || true
+        echo "Error: failed to disconnect from Tailscale" >&2
+        return 1
+    fi
+}
+
+tailscale_status() {
+    if tailscale_is_connected; then
+        local ip
+        ip=$(tailscale ip 2>/dev/null | head -1 || echo "unknown")
+        echo "connected (IP: $ip)"
+        return 0
+    else
+        echo "disconnected"
+        return 1
+    fi
+}
+
+# === MULLVAD ===
+mullvad_is_connected() {
+    local state
+    state=$(mullvad status 2>/dev/null | grep -oP 'Connected|Disconnected' | head -1)
+    [[ "$state" == "Connected" ]]
+}
+
+mullvad_on() {
+    echo "Opening Mullvad..."
+    mullvad-gui &>/dev/null &
+    notify-send -a "Omablue" "Mullvad" "Opening..." -i network-vpn 2>/dev/null || true
+}
+
+mullvad_off() {
+    if ! mullvad_is_connected; then
+        echo "Mullvad already disconnected"
+        notify-send -a "Omablue" "Mullvad" "Already disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        return 0
+    fi
+    echo "Disconnecting from Mullvad..."
+    if mullvad disconnect 2>&1; then
+        notify-send -a "Omablue" "Mullvad" "VPN disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        echo "Mullvad disconnected"
+    else
+        notify-send -a "Omablue" "Mullvad" "Failed to disconnect" -i network-error 2>/dev/null || true
+        echo "Error: failed to disconnect from Mullvad" >&2
+        return 1
+    fi
+}
+
+mullvad_status() {
+    if mullvad_is_connected; then
+        local ip
+        ip=$(mullvad status 2>/dev/null | grep -oP 'IPv4: \K[0-9.]+' | head -1 || echo "unknown")
+        echo "connected (IP: $ip)"
+        return 0
+    else
+        echo "disconnected"
+        return 1
+    fi
+}
+
+# === PROTONVPN ===
+protonvpn_is_running() {
+    pgrep -f "protonvpn-app" &>/dev/null
+}
+
+protonvpn_on() {
+    echo "Opening ProtonVPN..."
+    protonvpn-app &>/dev/null &
+    notify-send -a "Omablue" "ProtonVPN" "Opening..." -i network-vpn 2>/dev/null || true
+}
+
+protonvpn_off() {
+    if ! protonvpn_is_running; then
+        echo "ProtonVPN app already closed"
+        notify-send -a "Omablue" "ProtonVPN" "App already closed" -i network-vpn-disconnected 2>/dev/null || true
+        return 0
+    fi
+    echo "Closing ProtonVPN..."
+    if pkill -f "protonvpn-app" 2>&1; then
+        notify-send -a "Omablue" "ProtonVPN" "App closed" -i network-vpn-disconnected 2>/dev/null || true
+        echo "ProtonVPN app closed"
+    else
+        notify-send -a "Omablue" "ProtonVPN" "Failed to close" -i network-error 2>/dev/null || true
+        echo "Error: failed to close ProtonVPN" >&2
+        return 1
+    fi
+}
+
+protonvpn_status() {
+    if protonvpn_is_running; then
+        echo "running"
+        return 0
+    else
+        echo "closed"
+        return 1
+    fi
+}
+
+# === IVPN ===
+ivpn_is_connected() {
+    local state
+    state=$(ivpn status 2>/dev/null | grep -i "status" | grep -oP 'Connected|Disconnected' || echo "Disconnected")
+    [[ "$state" == "Connected" ]]
+}
+
+ivpn_on() {
+    echo "Opening IVPN..."
+    ivpn-ui &>/dev/null &
+    notify-send -a "Omablue" "IVPN" "Opening..." -i network-vpn 2>/dev/null || true
+}
+
+ivpn_off() {
+    if ! ivpn_is_connected; then
+        echo "IVPN already disconnected"
+        notify-send -a "Omablue" "IVPN" "Already disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        return 0
+    fi
+    echo "Disconnecting from IVPN..."
+    if ivpn disconnect 2>&1; then
+        notify-send -a "Omablue" "IVPN" "VPN disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        echo "IVPN disconnected"
+    else
+        notify-send -a "Omablue" "IVPN" "Failed to disconnect" -i network-error 2>/dev/null || true
+        echo "Error: failed to disconnect from IVPN" >&2
+        return 1
+    fi
+}
+
+ivpn_status() {
+    if ivpn_is_connected; then
+        echo "connected"
+        return 0
+    else
+        echo "disconnected"
+        return 1
+    fi
+}
+
+# Generic functions
+vpn_is_connected() {
+    local provider="$1"
+    case "$provider" in
+        tailscale) tailscale_is_connected ;;
+        mullvad) mullvad_is_connected ;;
+        protonvpn) protonvpn_is_connected ;;
+        ivpn) ivpn_is_connected ;;
+        *) return 1 ;;
+    esac
+}
+
+vpn_on() {
+    local provider="$1"
+    case "$provider" in
+        tailscale) tailscale_on ;;
+        mullvad) mullvad_on ;;
+        protonvpn) protonvpn_on ;;
+        ivpn) ivpn_on ;;
+        *) echo "Unknown VPN provider: $provider" >&2; return 1 ;;
+    esac
+}
+
+vpn_off() {
+    local provider="$1"
+    case "$provider" in
+        tailscale) tailscale_off ;;
+        mullvad) mullvad_off ;;
+        protonvpn) protonvpn_off ;;
+        ivpn) ivpn_off ;;
+        *) echo "Unknown VPN provider: $provider" >&2; return 1 ;;
+    esac
+}
+
+vpn_toggle() {
+    local provider="$1"
+    # GUI apps (protonvpn, mullvad, ivpn) always open on toggle
+    # CLI apps (tailscale) toggle connection state
+    case "$provider" in
+        protonvpn|mullvad|ivpn)
+            vpn_on "$provider"
+            ;;
+        *)
+            if vpn_is_connected "$provider"; then
+                vpn_off "$provider"
+            else
+                vpn_on "$provider"
+            fi
+            ;;
+    esac
+}
+
+vpn_status() {
+    local provider="$1"
+    case "$provider" in
+        tailscale) tailscale_status ;;
+        mullvad) mullvad_status ;;
+        protonvpn) protonvpn_status ;;
+        ivpn) ivpn_status ;;
+        *) echo "Unknown VPN provider: $provider" >&2; return 1 ;;
+    esac
+}
+
+show_usage() {
+    cat <<EOF
+Usage: $0 [provider] [action]
+
+Providers:
+  tailscale   - Tailscale VPN
+  mullvad     - Mullvad VPN
+  protonvpn   - ProtonVPN
+  ivpn        - IVPN
+  list        - Show installed VPN providers
+
+Actions:
+  on          - Connect to VPN
+  off         - Disconnect from VPN
+  toggle      - Toggle connection (default)
+  status      - Show connection status
+
+Examples:
+  $0 tailscale toggle     # Toggle Tailscale
+  $0 mullvad on          # Connect to Mullvad
+  $0 protonvpn status    # Check ProtonVPN status
+  $0 list                # List installed VPNs
+EOF
+}
+
+# Main logic
+if [[ "$PROVIDER" == "list" ]] || [[ -z "$PROVIDER" ]]; then
+    if [[ "$PROVIDER" == "list" ]]; then
+        echo "Installed VPN providers:"
+        get_installed_vpns | while read -r vpn; do
+            echo "  - $vpn"
+        done
+    else
+        show_usage
+    fi
+    exit 0
+fi
+
+if ! detect_vpn_provider "$PROVIDER"; then
+    notify-send -a "Omablue" "VPN" "$PROVIDER not found or not installed" -i network-vpn-disconnected 2>/dev/null || true
+    echo "Error: $PROVIDER not found or not installed" >&2
+    exit 1
+fi
+
+case "$ACTION" in
+    on|enable|up)
+        vpn_on "$PROVIDER"
+        ;;
+    off|disable|down)
+        vpn_off "$PROVIDER"
+        ;;
+    toggle)
+        vpn_toggle "$PROVIDER"
+        ;;
+    status)
+        vpn_status "$PROVIDER"
+        ;;
+    *)
+        show_usage
+        exit 1
+        ;;
+esac
