@@ -1,0 +1,102 @@
+#!/usr/bin/env bash
+#
+# omablue-tailscale - Toggle Tailscale VPN connection
+# Usage: omablue-tailscale [on|off|toggle|status]
+#
+
+set -euo pipefail
+PATH="/usr/bin:/usr/local/bin:/bin:/sbin"
+
+# Check tailscale is available
+if ! command -v tailscale &>/dev/null; then
+    notify-send -a "Omablue" "Tailscale" "tailscale not found" -i network-vpn-disconnected 2>/dev/null || true
+    echo "Error: tailscale command not found" >&2
+    exit 1
+fi
+
+is_connected() {
+    local state
+    state=$(tailscale status --json 2>/dev/null | awk -F'"' '/"BackendState"/{print $4}')
+    [[ "$state" == "Running" ]]
+}
+
+tailscale_on() {
+    if is_connected; then
+        echo "Tailscale already connected"
+        notify-send -a "Omablue" "Tailscale" "Already connected" -i network-vpn 2>/dev/null || true
+        return 0
+    fi
+
+    echo "Connecting to Tailscale..."
+    if tailscale up 2>&1; then
+        notify-send -a "Omablue" "Tailscale" "VPN connected" -i network-vpn 2>/dev/null || true
+        echo "Tailscale connected"
+    else
+        notify-send -a "Omablue" "Tailscale" "Failed to connect" -i network-vpn-disconnected 2>/dev/null || true
+        echo "Error: failed to connect to Tailscale" >&2
+        exit 1
+    fi
+}
+
+tailscale_off() {
+    if ! is_connected; then
+        echo "Tailscale already disconnected"
+        notify-send -a "Omablue" "Tailscale" "Already disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        return 0
+    fi
+
+    echo "Disconnecting from Tailscale..."
+    if tailscale down 2>&1; then
+        notify-send -a "Omablue" "Tailscale" "VPN disconnected" -i network-vpn-disconnected 2>/dev/null || true
+        echo "Tailscale disconnected"
+    else
+        notify-send -a "Omablue" "Tailscale" "Failed to disconnect" -i network-error 2>/dev/null || true
+        echo "Error: failed to disconnect from Tailscale" >&2
+        exit 1
+    fi
+}
+
+tailscale_toggle() {
+    if is_connected; then
+        tailscale_off
+    else
+        tailscale_on
+    fi
+}
+
+tailscale_status() {
+    if is_connected; then
+        local ip
+        ip=$(tailscale ip 2>/dev/null | head -1 || echo "unknown")
+        echo "connected (IP: $ip)"
+        exit 0
+    else
+        echo "disconnected"
+        exit 1
+    fi
+}
+
+case "${1:-toggle}" in
+    on|enable|up)
+        tailscale_on
+        ;;
+    off|disable|down)
+        tailscale_off
+        ;;
+    toggle)
+        tailscale_toggle
+        ;;
+    status)
+        tailscale_status
+        ;;
+    *)
+        echo "Usage: $0 [on|off|toggle|status]"
+        echo ""
+        echo "Commands:"
+        echo "  on/enable/up    - Connect to Tailscale VPN"
+        echo "  off/disable/down - Disconnect from Tailscale VPN"
+        echo "  toggle          - Toggle connection (default)"
+        echo "  status          - Show connection status"
+        exit 1
+        ;;
+esac

@@ -6,6 +6,8 @@
 
 set -euo pipefail
 
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
 # Dependency check
 for cmd in nmcli rofi notify-send; do
   if ! command -v "$cmd" &>/dev/null; then
@@ -99,8 +101,39 @@ manage_hotspot() {
   esac
 }
 
+manage_vpn() {
+  local tailscale_bin="$SCRIPT_DIR/omablue-tailscale"
+  if [ ! -x "$tailscale_bin" ]; then
+    tailscale_bin=$(command -v omablue-tailscale 2>/dev/null || true)
+  fi
+
+  if [ -z "$tailscale_bin" ]; then
+    notify-send -u critical -a "Network" "VPN" "omablue-tailscale not found"
+    return
+  fi
+
+  local status_label
+  if tailscale status --json 2>/dev/null | awk -F'"' '/"BackendState"/{exit ($4=="Running")?0:1}'; then
+    local ts_ip
+    ts_ip=$(tailscale ip 2>/dev/null | head -1 || echo "?")
+    status_label="Connesso ($ts_ip)"
+  else
+    status_label="Disconnesso"
+  fi
+
+  local VPN_OPTIONS="󰦝 Toggle Tailscale  [$status_label]"
+  local SEL
+  SEL=$(echo -e "$VPN_OPTIONS" | rofi -dmenu -p "VPN" -i -width 35 -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
+
+  case "$SEL" in
+  *"Toggle Tailscale"*)
+    "$tailscale_bin" toggle
+    ;;
+  esac
+}
+
 # Main Menu
-MAIN_OPTIONS="󰖩 Connect\n󰖪 Disconnect\n󰀞 Toggle WiFi\n󱚹 Hotspot Manager"
+MAIN_OPTIONS="󰖩 Connect\n󰖪 Disconnect\n󰀞 Toggle WiFi\n󱚹 Hotspot Manager\n󰦝 VPN"
 CHOSEN=$(echo -e "$MAIN_OPTIONS" | rofi -dmenu -p "Network" -i -width 25 -hover-select -me-select-entry '' -me-accept-entry MousePrimary)
 
 case "$CHOSEN" in
@@ -151,5 +184,8 @@ case "$CHOSEN" in
   ;;
 *Hotspot*)
   manage_hotspot
+  ;;
+*VPN*)
+  manage_vpn
   ;;
 esac

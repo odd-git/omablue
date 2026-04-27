@@ -47,9 +47,9 @@ check_dependencies() {
   done
 }
 
-# Bluetooth adapter check
+# Bluetooth adapter check — uses sysfs to avoid 2s bt_cmd delay on click
 check_bluetooth() {
-  if ! bt_cmd "list" | grep -q "Controller"; then
+  if ! ls /sys/class/bluetooth/ 2>/dev/null | grep -qE "^hci[0-9]+$"; then
     notify_bt "No Bluetooth adapter found" "critical"
     exit 1
   fi

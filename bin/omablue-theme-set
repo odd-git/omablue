@@ -4,6 +4,37 @@ set -euo pipefail
 # Omablue: The Secureblue Theme Engine
 # Architecture: Atomic / Sway / Dunst
 
+# Helper function to prompt for rofi icons
+prompt_rofi_icons() {
+    echo ""
+    echo "Rofi Launcher Appearance"
+    echo "────────────────────────"
+    local rofi_config="$HOME/.config/rofi/config.rasi"
+
+    while true; do
+        printf "Show icons in launcher? (y/n): "
+        read -r response
+        case "$response" in
+            [Yy])
+                sed -i 's@^    /\* show-icons: true; \*/@    show-icons: true;@' "$rofi_config"
+                sed -i 's@^    show-icons: false;@    /* show-icons: false; */@' "$rofi_config"
+                echo "✓ Icons enabled"
+                break
+                ;;
+            [Nn])
+                sed -i 's@^    show-icons: true;@    /* show-icons: true; */@' "$rofi_config"
+                sed -i 's@^    /\* show-icons: false; \*/@    show-icons: false;@' "$rofi_config"
+                echo "✓ Icons disabled"
+                break
+                ;;
+            *)
+                echo "Invalid input. Please enter 'y' or 'n'."
+                ;;
+        esac
+    done
+    echo ""
+}
+
 # Check for required theme argument; exit if missing or set to "CNCLD"
 if [[ -z $1 || $1 == "CNCLD" ]]; then
   echo "Usage: omablue-theme-set <theme-name>"
@@ -23,6 +54,9 @@ if [[ ! -d "$THEME_PATH" ]]; then
   echo "❌ Theme '$THEME_NAME' not found in $THEMES_DIR"
   exit 1
 fi
+
+# Prompt for rofi icon preference
+prompt_rofi_icons
 
 # --- 1. Update Theme Symlink (Atomic Workflow) ---
 # Update the master symlink to point to the new theme directory

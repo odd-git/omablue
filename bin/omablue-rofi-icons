@@ -1,0 +1,49 @@
+#!/bin/bash
+set -euo pipefail
+
+# Omablue Rofi Icons Toggle
+# Toggle icon visibility by commenting/uncommenting lines in config
+
+ROFI_CONFIG="$HOME/.config/rofi/config.rasi"
+
+if [[ ! -f "$ROFI_CONFIG" ]]; then
+    echo "Error: $ROFI_CONFIG not found"
+    exit 1
+fi
+
+action="${1:-toggle}"
+
+case "$action" in
+    toggle)
+        if grep -q "^    show-icons: true;" "$ROFI_CONFIG"; then
+            sed -i 's@^    show-icons: true;@    /* show-icons: true; */@' "$ROFI_CONFIG"
+            sed -i 's@^    /\* show-icons: false; \*/@    show-icons: false;@' "$ROFI_CONFIG"
+            echo "Icons disabled"
+        else
+            sed -i 's@^    /\* show-icons: true; \*/@    show-icons: true;@' "$ROFI_CONFIG"
+            sed -i 's@^    show-icons: false;@    /* show-icons: false; */@' "$ROFI_CONFIG"
+            echo "Icons enabled"
+        fi
+        ;;
+    enable)
+        sed -i 's@^    /\* show-icons: true; \*/@    show-icons: true;@' "$ROFI_CONFIG"
+        sed -i 's@^    show-icons: false;@    /* show-icons: false; */@' "$ROFI_CONFIG"
+        echo "Icons enabled"
+        ;;
+    disable)
+        sed -i 's@^    show-icons: true;@    /* show-icons: true; */@' "$ROFI_CONFIG"
+        sed -i 's@^    /\* show-icons: false; \*/@    show-icons: false;@' "$ROFI_CONFIG"
+        echo "Icons disabled"
+        ;;
+    status)
+        if grep -q "^    show-icons: true;" "$ROFI_CONFIG"; then
+            echo "Rofi icons: enabled"
+        else
+            echo "Rofi icons: disabled"
+        fi
+        ;;
+    *)
+        echo "Usage: omablue-rofi-icons [toggle|enable|disable|status]"
+        exit 1
+        ;;
+esac

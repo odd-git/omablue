@@ -1,0 +1,116 @@
+#!/bin/bash
+set -euo pipefail
+
+# --- OmaBlue Onboarding Script ---
+# Shows first-run welcome dialog with principal keybindings and waybar info
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MARKER_DIR="$HOME/.local/share/omablue"
+MARKER_FILE="$MARKER_DIR/.onboarded"
+FORCE="${1:-}"
+
+# Create marker directory if needed
+mkdir -p "$MARKER_DIR"
+
+# Check if already onboarded (unless --force flag)
+if [[ "$FORCE" != "--force" ]] && [[ -f "$MARKER_FILE" ]]; then
+  exit 0
+fi
+
+# Main onboarding menu
+show_onboarding() {
+  local choice
+  choice=$(cat << 'EOF' | rofi -dmenu -i -p "OmaBlue Setup" -theme-str 'window { width: 65%; }' || echo "exit"
+󰌾 Welcome to OmaBlue
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ PRINCIPAL KEYBINDS
+
+Super+Esc      Open OmaBlue Menu
+Super+Space    App Launcher
+Super+Return   Terminal
+Super+Shift+b  View All Keybindings
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+ QUICK NAVIGATION
+
+📖 View All Keybindings
+ℹ️  Waybar Icons Info
+✓ Got It!
+EOF
+)
+
+  handle_selection "$choice"
+}
+
+show_waybar_info() {
+  local info
+  info=$(cat << 'EOF'
+WAYBAR ICONS EXPLAINED
+
+ 󰌾  OmaBlue Menu
+    Left-click: Open main menu
+    Right-click: Open terminal
+
+   Sync Icon
+    Indicates update available
+    Left-click: Check for updates
+
+ 󰍛  CPU Monitor
+    Shows CPU usage
+    Left-click: Open system monitor
+
+ Network Status
+    Shows WiFi/Ethernet connection
+    Left-click: Network settings
+
+   Battery
+    Shows current charge %
+    Left-click: Power settings
+
+ Clock
+    Shows current time
+    Right-click: Timezone selector
+
+━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
+All icons have tooltips on hover!
+Press Escape to close this info.
+EOF
+)
+
+  echo "$info" | rofi -dmenu -i -p "Waybar Help" -theme-str 'window { width: 60%; }' > /dev/null 2>&1 || true
+}
+
+handle_selection() {
+  local selection="$1"
+
+  case "$selection" in
+    *"View All Keybindings"*)
+      "$OMABIN/omablue-menu-keybindings"
+      # Show menu again after viewing keybindings
+      show_onboarding
+      ;;
+    *"Waybar Icons"*)
+      show_waybar_info
+      # Show menu again after viewing waybar info
+      show_onboarding
+      ;;
+    *"Got It"*)
+      mark_onboarded
+      ;;
+    "exit"|"")
+      # User closed dialog without selecting, don't mark as onboarded
+      ;;
+    *)
+      mark_onboarded
+      ;;
+  esac
+}
+
+mark_onboarded() {
+  touch "$MARKER_FILE"
+  notify-send "OmaBlue" "Welcome! Press Super+Esc anytime to open the menu." -i dialog-information
+}
+
+# Main execution
+show_onboarding
