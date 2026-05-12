@@ -1,6 +1,8 @@
 #!/bin/bash
 set -euo pipefail
 
+trap 'echo "Error on line $LINENO"; read -p "Press Enter to exit..."; exit 1' ERR
+
 # Force path for local utilities
 export PATH="$HOME/.local/share/omablue/bin:$PATH"
 
@@ -37,7 +39,7 @@ SELECTED=$(echo "$LIST" | fzf \
   --prompt='Search Brew > ' \
   --layout=reverse \
   --height=80% \
-  --border)
+  --border) || SELECTED=""
 
 if [[ -z "$SELECTED" ]]; then
   echo "Operation cancelled."
@@ -51,14 +53,20 @@ PACKAGE=$(echo "$SELECTED" | awk '{print $1}')
 clear
 echo -e "Installing: \e[33m$PACKAGE\e[0m\n"
 
-# Installation process with persistence logic
-if brew install "$PACKAGE"; then
-  # Send notification to Dunst
+# Installation process
+echo "Running: brew install $PACKAGE"
+if timeout 600 brew install "$PACKAGE" 2>&1; then
   notify-send -a "Omablue" -i "package-x-generic" "Install Success" "Package: $PACKAGE"
   echo -e "\n\e[32mInstallation finished successfully.\e[0m"
 else
-  notify-send -u critical -a "Omablue" "Install Failed" "Error during $PACKAGE installation"
-  echo -e "\n\e[31mError occurred during installation of $PACKAGE.\e[0m"
+  INSTALL_STATUS=$?
+  if [[ $INSTALL_STATUS -eq 124 ]]; then
+    notify-send -u critical -a "Omablue" "Install Timeout" "Installation of $PACKAGE took too long"
+    echo -e "\n\e[31mInstallation timed out (10 minutes).\e[0m"
+  else
+    notify-send -u critical -a "Omablue" "Install Failed" "Error during $PACKAGE installation"
+    echo -e "\n\e[31mError occurred during installation of $PACKAGE.\e[0m"
+  fi
 fi
 
 # Force terminal to stay open until user action
