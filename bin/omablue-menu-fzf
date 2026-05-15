@@ -113,9 +113,9 @@ show_setup_menu() {
     choice=$(menu "Setup" "Theme" "Bluetooth" "Mixer" "Network" "Sync Setup" "Ujust" "Sync" "< Back")
     case "${choice,,}" in
     *theme*)       run_script "$OMABIN/omablue-theme-selector" ;;
-    *bluetooth*)   run_script "$OMABIN/omablue-bluetooth" ;;
-    *mixer*)       run_script "$OMABIN/omablue-mixer" ;;
-    *network*)     run_script "$OMABIN/omablue-nmcli" ;;
+    *bluetooth*)   run_script "$OMABIN/omablue-bluetooth-fzf" ;;
+    *mixer*)       run_script "$OMABIN/omablue-mixer-fzf" ;;
+    *network*)     run_script "$OMABIN/omablue-nmcli-fzf" ;;
     *sync\ setup*) run_script "$OMABIN/omasync-setup" ;;
     *ujust*)       run_script "$OMABIN/omablue-install-ujust" ;;
     *sync*)        run_script "$OMABIN/omasync" ;;
