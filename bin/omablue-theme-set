@@ -130,6 +130,15 @@ fi
 # --- 5. Reload Sway Configuration ---
 swaymsg reload 2>/dev/null || true
 
+# --- 5b. Apply GTK Theme Settings ---
+GTK_THEME_CONF="$CURRENT_DIR/gtk-theme.conf"
+if [[ -f "$GTK_THEME_CONF" ]]; then
+  source "$GTK_THEME_CONF"
+  dconf write /org/gnome/desktop/interface/gtk-theme "'$gtk_theme'" 2>/dev/null || true
+  dconf write /org/gnome/desktop/interface/icon-theme "'$gtk_icons'" 2>/dev/null || true
+  echo "⚙️  Applied GTK theme: $gtk_theme"
+fi
+
 # --- 6. Save Current Theme Name ---
 echo "$THEME_NAME" > "$CURRENT_DIR/theme.name"
 

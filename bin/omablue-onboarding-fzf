@@ -1,0 +1,137 @@
+#!/bin/bash
+set -euo pipefail
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+MARKER_DIR="$HOME/.local/share/omablue"
+MARKER_FILE="$MARKER_DIR/.onboarded"
+FORCE="${1:-}"
+
+mkdir -p "$MARKER_DIR"
+
+if [[ "$FORCE" != "--force" ]] && [[ -f "$MARKER_FILE" ]]; then
+  exit 0
+fi
+
+if [[ ! -t 0 ]]; then
+  if command -v ptyxis &>/dev/null; then
+    exec ptyxis -- bash -c "\"$0\" ${FORCE}"
+  elif command -v foot &>/dev/null; then
+    exec foot bash -c "\"$0\" ${FORCE}"
+  elif command -v kitty &>/dev/null; then
+    exec kitty bash -c "\"$0\" ${FORCE}"
+  elif command -v alacritty &>/dev/null; then
+    exec alacritty -e bash -c "\"$0\" ${FORCE}"
+  elif command -v wezterm &>/dev/null; then
+    exec wezterm start -- bash -c "\"$0\" ${FORCE}"
+  elif command -v gnome-terminal &>/dev/null; then
+    exec gnome-terminal -- bash -c "\"$0\" ${FORCE}"
+  else
+    notify-send "Error" "No supported terminal emulator found."
+    exit 1
+  fi
+fi
+
+if ! command -v fzf &>/dev/null; then
+  echo "Error: fzf is required. Install it with: brew install fzf"
+  read -rn1 -p "Press any key to exit..."
+  exit 1
+fi
+
+KEYBINDINGS_HELP=$(cat <<'EOF'
+PRINCIPAL KEYBINDS
+══════════════════════════════════════════
+
+  Super+Esc        Open OmaBlue Menu
+  Super+Space      App Launcher
+  Super+Return     Terminal
+  Super+Shift+b    View All Keybindings
+
+WINDOW MANAGEMENT
+══════════════════════════════════════════
+
+  Super+h/j/k/l   Focus left/down/up/right
+  Super+Shift+q    Close window
+  Super+f          Toggle fullscreen
+  Super+v          Split vertical
+  Super+Shift+Space Toggle floating
+
+WORKSPACES
+══════════════════════════════════════════
+
+  Super+1-9        Switch to workspace
+  Super+Shift+1-9  Move window to workspace
+
+Press q or Esc to close
+EOF
+)
+
+WAYBAR_HELP=$(cat <<'EOF'
+WAYBAR ICONS EXPLAINED
+══════════════════════════════════════════
+
+  󰌾  OmaBlue Menu
+     Left-click:   Open main menu
+     Right-click:  Open terminal
+
+     Sync Icon
+     Indicates update available
+     Left-click:   Check for updates
+
+  󰍛  CPU Monitor
+     Shows CPU usage
+     Left-click:   Open system monitor
+
+     Network Status
+     Shows WiFi/Ethernet connection
+     Left-click:   Network settings
+
+     Battery
+     Shows current charge %
+     Left-click:   Power settings
+
+     Clock
+     Shows current time
+     Right-click:  Timezone selector
+
+All icons have tooltips on hover!
+
+Press q or Esc to close
+EOF
+)
+
+mark_onboarded() {
+  touch "$MARKER_FILE"
+  notify-send "OmaBlue" "Welcome! Press Super+Esc anytime to open the menu." -i dialog-information
+}
+
+show_onboarding() {
+  local choice
+  choice=$(printf "󰌾  Welcome — View Keybindings\nℹ️   Waybar Icons Info\n✓   Got it! Let me in" | fzf \
+    --prompt="  OmaBlue Setup > " \
+    --height=25% \
+    --border=rounded \
+    --no-multi \
+    --header="Welcome to OmaBlue — choose an option or press Esc" \
+    2>/dev/null) || return 1
+  echo "$choice"
+}
+
+while true; do
+  choice=$(show_onboarding) || break
+
+  case "$choice" in
+  *"View Keybindings")
+    echo "$KEYBINDINGS_HELP" | less -R --prompt="Keybindings (q to close)"
+    ;;
+  *"Waybar Icons")
+    echo "$WAYBAR_HELP" | less -R --prompt="Waybar Help (q to close)"
+    ;;
+  *"Got it"*)
+    mark_onboarded
+    break
+    ;;
+  "")
+    break
+    ;;
+  esac
+done

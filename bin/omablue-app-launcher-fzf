@@ -1,0 +1,86 @@
+#!/bin/bash
+set -euo pipefail
+
+if [[ ! -t 0 ]]; then
+  if command -v ptyxis &>/dev/null; then
+    exec ptyxis -- bash -c "\"$0\""
+  elif command -v foot &>/dev/null; then
+    exec foot bash -c "\"$0\""
+  elif command -v kitty &>/dev/null; then
+    exec kitty bash -c "\"$0\""
+  elif command -v alacritty &>/dev/null; then
+    exec alacritty -e bash -c "\"$0\""
+  elif command -v wezterm &>/dev/null; then
+    exec wezterm start -- bash -c "\"$0\""
+  elif command -v gnome-terminal &>/dev/null; then
+    exec gnome-terminal -- bash -c "\"$0\""
+  else
+    notify-send "Error" "No supported terminal emulator found."
+    exit 1
+  fi
+fi
+
+if ! command -v fzf &>/dev/null; then
+  echo "Error: fzf is required. Install it with: brew install fzf"
+  read -rn1 -p "Press any key to exit..."
+  exit 1
+fi
+
+# Single-pass awk parse: skip NoDisplay=true, non-Application types, and nameless entries.
+# Output format: "Display Name|/path/to/file.desktop"
+# "Display Name" is "Name — GenericName" when GenericName differs from Name.
+parse_apps() {
+  local dirs=(
+    /usr/share/applications
+    "$HOME/.local/share/applications"
+    /var/lib/flatpak/exports/share/applications
+  )
+
+  for dir in "${dirs[@]}"; do
+    [[ -d "$dir" ]] || continue
+    find "$dir" -maxdepth 1 -name "*.desktop" 2>/dev/null
+  done | while IFS= read -r f; do
+    awk -v file="$f" '
+      BEGIN { in_entry=0; name=""; generic=""; type=""; no_display=0 }
+      /^\[Desktop Entry\]/              { in_entry=1; next }
+      /^\[/                             { in_entry=0; next }
+      !in_entry                         { next }
+      /^NoDisplay=true/                 { no_display=1 }
+      /^Name=/                          { name=substr($0,6) }
+      /^GenericName=/                   { generic=substr($0,13) }
+      /^Type=/                          { type=substr($0,6) }
+      END {
+        if (no_display || type != "Application" || name == "") exit
+        display = (generic != "" && generic != name) ? name "  —  " generic : name
+        print display "|" file
+      }
+    ' "$f"
+  done | sort -t'|' -k1,1
+}
+
+APPS=$(parse_apps)
+
+if [[ -z "$APPS" ]]; then
+  echo "No applications found."
+  sleep 1
+  exit 0
+fi
+
+CHOICE=$(echo "$APPS" | cut -d'|' -f1 | fzf \
+  --prompt="  Launch > " \
+  --height=60% \
+  --border=rounded \
+  --no-multi \
+  --reverse 2>/dev/null) || exit 0
+
+[[ -z "$CHOICE" ]] && exit 0
+
+DESKTOP_FILE=$(echo "$APPS" | awk -F'|' -v c="$CHOICE" '$1 == c { print $2; exit }')
+
+if [[ -n "$DESKTOP_FILE" ]]; then
+  gtk-launch "$(basename "$DESKTOP_FILE" .desktop)" &
+  disown
+else
+  echo "Could not find app: $CHOICE"
+  sleep 1
+fi

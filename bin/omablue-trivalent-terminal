@@ -1,0 +1,86 @@
+#!/bin/bash
+
+export PATH="$HOME/.local/bin:$HOME/.local/share/omablue/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+CONFIG_DIR="$HOME/.config/trivalent"
+LOCAL_STATE="$CONFIG_DIR/Local State"
+
+# --- Picker mode (runs inside the spawned terminal) ---
+if [[ "$1" == "--picker" ]]; then
+  PROFILE_LIST="$2"
+  RESULT_FILE="$3"
+
+  SELECTED=$(cut -d'|' -f1 "$PROFILE_LIST" | fzf \
+    --prompt "Trivalent Profile > " \
+    --height 40% \
+    --border rounded \
+    --no-multi \
+    --exit-0)
+
+  [[ -n "$SELECTED" ]] && echo "$SELECTED" > "$RESULT_FILE"
+  exit 0
+fi
+
+# --- Orchestrator mode ---
+
+if ! command -v jq &>/dev/null; then
+  notify-send "Error" "jq is required to parse browser profiles."
+  exit 1
+fi
+
+if ! command -v fzf &>/dev/null; then
+  notify-send "Error" "fzf is required for profile selection."
+  exit 1
+fi
+
+if [[ ! -f "$LOCAL_STATE" ]]; then
+  notify-send "Error" "Trivalent Local State not found at $CONFIG_DIR"
+  exit 1
+fi
+
+PROFILE_DATA=$(jq -r '.profile.info_cache | to_entries[] | "\(.value.name)|\(.key)"' "$LOCAL_STATE" 2>/dev/null)
+PROFILE_DATA=$(printf "Guest Profile|GUEST_SESSION\n%s" "$PROFILE_DATA")
+
+PROFILE_LIST=$(mktemp)
+RESULT_FILE=$(mktemp)
+trap 'rm -f "$PROFILE_LIST" "$RESULT_FILE"' EXIT
+
+echo "$PROFILE_DATA" > "$PROFILE_LIST"
+
+# --- Terminal detection ---
+PICKER_CMD="\"$0\" --picker \"$PROFILE_LIST\" \"$RESULT_FILE\""
+
+if command -v ptyxis &>/dev/null; then
+  ptyxis -- bash -c "$PICKER_CMD"
+elif command -v foot &>/dev/null; then
+  foot bash -c "$PICKER_CMD"
+elif command -v kitty &>/dev/null; then
+  kitty bash -c "$PICKER_CMD"
+elif command -v alacritty &>/dev/null; then
+  alacritty -e bash -c "$PICKER_CMD"
+elif command -v wezterm &>/dev/null; then
+  wezterm start -- bash -c "$PICKER_CMD"
+elif command -v gnome-terminal &>/dev/null; then
+  gnome-terminal -- bash -c "$PICKER_CMD"
+elif command -v xterm &>/dev/null; then
+  xterm -e bash -c "$PICKER_CMD"
+else
+  notify-send "Error" "No supported terminal emulator found."
+  exit 1
+fi
+
+SELECTED_NAME=$(cat "$RESULT_FILE" 2>/dev/null)
+[[ -z "$SELECTED_NAME" ]] && exit 0
+
+SELECTED_ID=$(awk -F'|' -v name="$SELECTED_NAME" '$1 == name {print $2; exit}' "$PROFILE_LIST")
+
+if [[ "$SELECTED_ID" == "GUEST_SESSION" ]]; then
+  notify-send -u low -a "Trivalent" "Launching Guest Session" "No data will be saved."
+  nohup trivalent --guest >/dev/null 2>&1 &
+  disown
+elif [[ -n "$SELECTED_ID" ]]; then
+  nohup trivalent --profile-directory="$SELECTED_ID" >/dev/null 2>&1 &
+  disown
+else
+  notify-send "Error" "Could not resolve profile for: $SELECTED_NAME"
+fi

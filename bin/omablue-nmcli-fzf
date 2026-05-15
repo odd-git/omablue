@@ -1,0 +1,288 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+if [[ ! -t 0 ]]; then
+  if command -v ptyxis &>/dev/null; then
+    exec ptyxis -- bash -c "\"$0\""
+  elif command -v foot &>/dev/null; then
+    exec foot bash -c "\"$0\""
+  elif command -v kitty &>/dev/null; then
+    exec kitty bash -c "\"$0\""
+  elif command -v alacritty &>/dev/null; then
+    exec alacritty -e bash -c "\"$0\""
+  elif command -v wezterm &>/dev/null; then
+    exec wezterm start -- bash -c "\"$0\""
+  elif command -v gnome-terminal &>/dev/null; then
+    exec gnome-terminal -- bash -c "\"$0\""
+  else
+    notify-send "Error" "No supported terminal emulator found."
+    exit 1
+  fi
+fi
+
+for cmd in fzf nmcli notify-send; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: $cmd is required."
+    read -rn1 -p "Press any key to exit..."
+    exit 1
+  fi
+done
+
+CONFIG_DIR="$HOME/.config/sway-network"
+mkdir -p "$CONFIG_DIR"
+chmod 700 "$CONFIG_DIR"
+PASS_FILE="$CONFIG_DIR/hotspot_pass"
+
+INTERFACE=$(nmcli -t -f DEVICE,TYPE device | grep wifi | cut -d: -f1 | head -n1)
+if [[ -z "$INTERFACE" ]]; then
+  notify-send -u critical -a "Network" "Error" "No WiFi interface found"
+  exit 1
+fi
+
+confirm() {
+  local prompt="$1"
+  local answer
+  answer=$(printf "Yes\nNo" | fzf \
+    --prompt="  $prompt > " \
+    --height=15% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || return 1
+  [[ "$answer" == "Yes" ]]
+}
+
+toggle_wifi() {
+  local state
+  state=$(nmcli radio wifi)
+  if [[ "$state" == "enabled" ]]; then
+    nmcli device disconnect "$INTERFACE" 2>/dev/null || true
+    nmcli radio wifi off
+    notify-send -a "Network" -i network-wireless-off-symbolic "WiFi" "Disabled"
+  else
+    nmcli radio wifi on
+    notify-send -a "Network" -i network-wireless-symbolic "WiFi" "Enabled"
+  fi
+}
+
+manage_hotspot() {
+  local sel
+  sel=$(printf "󰖩  Toggle Hotspot\n󰒄  Set/Change Password" | fzf \
+    --prompt="  Hotspot > " \
+    --height=20% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || return
+
+  case "$sel" in
+  *"Toggle Hotspot")
+    local is_active
+    is_active=$(nmcli -t -f NAME,DEVICE connection show --active | grep "Hotspot" || true)
+    if [[ -n "$is_active" ]]; then
+      nmcli con down Hotspot && notify-send -a "Network" "Hotspot" "Deactivated"
+    else
+      if [[ ! -f "$PASS_FILE" ]]; then
+        echo -n "Hotspot password (min 8 chars): "
+        local new_pass
+        read -rs new_pass
+        echo
+        if [[ -z "$new_pass" ]]; then
+          notify-send -u critical -a "Network" "Error" "Password required"
+          return
+        fi
+        if [[ ${#new_pass} -lt 8 ]]; then
+          notify-send -u critical -a "Network" "Error" "Password too short (min 8 chars)"
+          return
+        fi
+        echo "$new_pass" >"$PASS_FILE"
+        chmod 600 "$PASS_FILE"
+      fi
+      local hpass
+      hpass=$(cat "$PASS_FILE")
+      notify-send -a "Network" "Hotspot" "Activating..."
+      if nmcli connection show Hotspot &>/dev/null; then
+        nmcli connection modify Hotspot wifi-sec.psk "$hpass"
+        if nmcli connection up Hotspot; then
+          notify-send -a "Network" -i folder-remote "Hotspot" "Active: $(hostname)"
+        else
+          notify-send -u critical -a "Network" "Error" "Failed to activate hotspot"
+        fi
+      else
+        if nmcli device wifi hotspot ssid "$(hostname)" password "$hpass" ifname "$INTERFACE"; then
+          notify-send -a "Network" -i folder-remote "Hotspot" "Active: $(hostname)"
+        else
+          notify-send -u critical -a "Network" "Error" "Failed to activate hotspot"
+        fi
+      fi
+    fi
+    ;;
+  *"Set/Change Password")
+    echo -n "New hotspot password (min 8 chars): "
+    local new_pass
+    read -rs new_pass
+    echo
+    if [[ -z "$new_pass" ]]; then
+      notify-send -u critical -a "Network" "Error" "Password cannot be empty"
+    elif [[ ${#new_pass} -lt 8 ]]; then
+      notify-send -u critical -a "Network" "Error" "Password too short (min 8 chars)"
+    else
+      echo "$new_pass" >"$PASS_FILE"
+      chmod 600 "$PASS_FILE"
+      notify-send -a "Network" "Hotspot" "Password updated"
+    fi
+    ;;
+  esac
+}
+
+get_vpn_status() {
+  local provider="$1"
+  case "$provider" in
+    tailscale)
+      if tailscale status --json 2>/dev/null | awk -F'"' '/"BackendState"/{exit ($4=="Running")?0:1}'; then
+        local ip
+        ip=$(tailscale ip 2>/dev/null | head -1 || echo "?")
+        echo "✓ ($ip)"
+      else
+        echo "✗"
+      fi
+      ;;
+    mullvad)
+      if command -v mullvad &>/dev/null && mullvad status 2>/dev/null | grep -q "Connected"; then
+        echo "✓"
+      else
+        echo "✗"
+      fi
+      ;;
+    protonvpn)
+      if pgrep -f "protonvpn-app" &>/dev/null; then
+        echo "✓ running"
+      else
+        echo "✗"
+      fi
+      ;;
+    ivpn)
+      if command -v ivpn &>/dev/null && ivpn status 2>/dev/null | grep -qi "connected"; then
+        echo "✓"
+      else
+        echo "✗"
+      fi
+      ;;
+  esac
+}
+
+get_vpn_name() {
+  case "$1" in
+    tailscale) echo "Tailscale" ;;
+    mullvad)   echo "Mullvad" ;;
+    protonvpn) echo "ProtonVPN" ;;
+    ivpn)      echo "IVPN" ;;
+    *)         echo "$1" ;;
+  esac
+}
+
+detect_installed_vpns() {
+  local vpns=()
+  command -v tailscale &>/dev/null    && vpns+=("tailscale")
+  command -v mullvad &>/dev/null      && vpns+=("mullvad")
+  command -v protonvpn-app &>/dev/null && vpns+=("protonvpn")
+  command -v ivpn &>/dev/null         && vpns+=("ivpn")
+  printf '%s\n' "${vpns[@]}"
+}
+
+manage_vpn() {
+  local vpn_bin="$SCRIPT_DIR/omablue-vpn"
+  [[ ! -x "$vpn_bin" ]] && vpn_bin=$(command -v omablue-vpn 2>/dev/null || true)
+
+  local installed_vpns
+  installed_vpns=$(detect_installed_vpns)
+
+  if [[ -z "$installed_vpns" ]]; then
+    notify-send -u critical -a "Network" "VPN" "No VPN providers found"
+    return
+  fi
+
+  local vpn_options=""
+  while IFS= read -r vpn; do
+    local name status
+    name=$(get_vpn_name "$vpn")
+    status=$(get_vpn_status "$vpn")
+    vpn_options+="󰦝  Toggle $name  [$status]\n"
+  done <<< "$installed_vpns"
+
+  local sel
+  sel=$(printf "%b" "$vpn_options" | fzf \
+    --prompt="  VPN > " \
+    --height=40% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || return
+
+  [[ -z "$sel" ]] && return
+
+  local selected_vpn=""
+  echo "$sel" | grep -q "Tailscale" && selected_vpn="tailscale"
+  echo "$sel" | grep -q "Mullvad"   && selected_vpn="mullvad"
+  echo "$sel" | grep -q "ProtonVPN" && selected_vpn="protonvpn"
+  echo "$sel" | grep -q "IVPN"      && selected_vpn="ivpn"
+
+  if [[ -n "$selected_vpn" ]] && [[ -n "$vpn_bin" ]]; then
+    "$vpn_bin" "$selected_vpn" toggle
+  fi
+}
+
+# Main menu
+CHOSEN=$(printf "󰖩  Connect\n󰖪  Disconnect\n󰀞  Toggle WiFi\n󱚹  Hotspot Manager\n󰦝  VPN" | fzf \
+  --prompt="  Network > " \
+  --height=35% \
+  --border=rounded \
+  --no-multi 2>/dev/null) || exit 0
+
+[[ -z "$CHOSEN" ]] && exit 0
+
+case "$CHOSEN" in
+*"Connect")
+  nmcli device wifi rescan 2>/dev/null || true
+  sleep 1
+  WIFI_LIST=$(nmcli --terse --fields "SSID,BARS,SECURITY" device wifi list \
+    | awk -F: '$1 != "" {print $1 " | " $2 " | " $3}' | sort -u -t'|' -k1,1)
+  if [[ -z "$WIFI_LIST" ]]; then
+    notify-send -u critical -a "Network" "Error" "No networks found"
+    exit 1
+  fi
+  CHOSEN_SSID_LINE=$(echo "$WIFI_LIST" | fzf \
+    --prompt="  SSID > " \
+    --height=50% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || exit 0
+  [[ -z "$CHOSEN_SSID_LINE" ]] && exit 0
+  SSID=$(echo "$CHOSEN_SSID_LINE" | cut -d'|' -f1 | xargs)
+  notify-send -a "Network" "Connecting to $SSID..."
+  if ! nmcli device wifi connect "$SSID" 2>/dev/null; then
+    echo -n "Password for $SSID: "
+    read -rs PASS
+    echo
+    if [[ -z "$PASS" ]]; then
+      notify-send -a "Network" "Cancelled" "Connection cancelled"
+      exit 0
+    fi
+    if nmcli device wifi connect "$SSID" password "$PASS"; then
+      notify-send -a "Network" -i network-wireless-symbolic "Connected" "Successfully connected to $SSID"
+    else
+      notify-send -u critical -a "Network" "Error" "Failed to connect to $SSID"
+      exit 1
+    fi
+  else
+    notify-send -a "Network" -i network-wireless-symbolic "Connected" "Successfully connected to $SSID"
+  fi
+  ;;
+*"Disconnect")
+  nmcli device disconnect "$INTERFACE" && notify-send -a "Network" "Disconnected"
+  ;;
+*"Toggle WiFi")
+  toggle_wifi
+  ;;
+*"Hotspot Manager")
+  manage_hotspot
+  ;;
+*"VPN")
+  manage_vpn
+  ;;
+esac

@@ -1,0 +1,71 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ! -t 0 ]]; then
+  if command -v ptyxis &>/dev/null; then
+    exec ptyxis -- bash -c "\"$0\""
+  elif command -v foot &>/dev/null; then
+    exec foot bash -c "\"$0\""
+  elif command -v kitty &>/dev/null; then
+    exec kitty bash -c "\"$0\""
+  elif command -v alacritty &>/dev/null; then
+    exec alacritty -e bash -c "\"$0\""
+  elif command -v wezterm &>/dev/null; then
+    exec wezterm start -- bash -c "\"$0\""
+  elif command -v gnome-terminal &>/dev/null; then
+    exec gnome-terminal -- bash -c "\"$0\""
+  else
+    notify-send "Error" "No supported terminal emulator found."
+    exit 1
+  fi
+fi
+
+for cmd in fzf tuned-adm notify-send; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: $cmd is required."
+    read -rn1 -p "Press any key to exit..."
+    exit 1
+  fi
+done
+
+if ! systemctl is-active --quiet tuned; then
+  notify-send -u critical "Tuned" "tuned service is not running.\nStart it with: run0 systemctl enable --now tuned"
+  exit 1
+fi
+
+declare -A PROFILES=(
+  ["Balance"]="balanced-battery"
+  ["Powersave"]="powersave"
+  ["Performance"]="throughput-performance"
+)
+
+CURRENT=$(tuned-adm active 2>/dev/null | sed 's/.*: //')
+
+CHOSEN=$(for name in Balance Powersave Performance; do
+  if [[ "${PROFILES[$name]}" == "$CURRENT" ]]; then
+    echo "$name  (active)"
+  else
+    echo "$name"
+  fi
+done | fzf \
+  --prompt="  Power Profile > " \
+  --height=30% \
+  --border=rounded \
+  --no-multi 2>/dev/null) || exit 0
+
+[[ -z "$CHOSEN" ]] && exit 0
+
+NAME=$(echo "$CHOSEN" | awk '{print $1}')
+TARGET="${PROFILES[$NAME]}"
+
+if [[ "$TARGET" == "$CURRENT" ]]; then
+  notify-send -a "Omablue" "Power Profile" "Already on $NAME ($TARGET)"
+  exit 0
+fi
+
+if run0 tuned-adm profile "$TARGET" 2>/dev/null; then
+  notify-send -a "Omablue" "Power Profile" "Switched to $NAME ($TARGET)"
+else
+  notify-send -u critical "Power Profile" "Failed to switch to $NAME"
+  exit 1
+fi

@@ -1,0 +1,66 @@
+#!/bin/bash
+set -euo pipefail
+
+export PATH="/home/linuxbrew/.linuxbrew/bin:$HOME/.local/share/omablue/bin:$HOME/.local/bin:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+if [[ ! -t 0 ]]; then
+  if command -v ptyxis &>/dev/null; then
+    exec ptyxis -- bash -c "\"$0\""
+  elif command -v foot &>/dev/null; then
+    exec foot bash -c "\"$0\""
+  elif command -v kitty &>/dev/null; then
+    exec kitty bash -c "\"$0\""
+  elif command -v alacritty &>/dev/null; then
+    exec alacritty -e bash -c "\"$0\""
+  elif command -v wezterm &>/dev/null; then
+    exec wezterm start -- bash -c "\"$0\""
+  elif command -v gnome-terminal &>/dev/null; then
+    exec gnome-terminal -- bash -c "\"$0\""
+  else
+    notify-send "Error" "No supported terminal emulator found."
+    exit 1
+  fi
+fi
+
+SAVE_DIR="$HOME/Pictures/Screenshots"
+mkdir -p "$SAVE_DIR"
+TIMESTAMP=$(date +'%Y-%m-%d-%H%M%S')
+FILE_PATH="$SAVE_DIR/screenshot_$TIMESTAMP.png"
+
+CHOICE=$(printf "Select Area\nActive Window\nFullscreen" | fzf \
+  --prompt="  Capture > " \
+  --height=20% \
+  --border=rounded \
+  --no-multi 2>/dev/null) || exit 0
+
+[[ -z "$CHOICE" ]] && exit 0
+
+case "$CHOICE" in
+"Select Area")
+  GEOMETRY=$(slurp -b "#00000044" -c "#cba6f7" -w 2) || exit 0
+  ;;
+"Active Window")
+  GEOMETRY=$(swaymsg -t get_tree | jq -r '.. | select(.focused? == true).rect | "\(.x),\(.y) \(.width)x\(.height)"')
+  ;;
+"Fullscreen")
+  GEOMETRY=""
+  ;;
+*)
+  exit 0
+  ;;
+esac
+
+if [[ "$CHOICE" == "Select Area" ]] && [[ -z "${GEOMETRY:-}" ]]; then
+  exit 0
+fi
+
+if [[ -z "${GEOMETRY:-}" ]]; then
+  grim "$FILE_PATH"
+else
+  grim -g "$GEOMETRY" "$FILE_PATH"
+fi
+
+if [[ -f "$FILE_PATH" ]]; then
+  wl-copy <"$FILE_PATH"
+  notify-send "Omablue" "Screenshot captured and copied to clipboard" -i camera-photo
+fi

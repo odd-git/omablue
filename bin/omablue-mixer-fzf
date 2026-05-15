@@ -1,0 +1,104 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+if [[ ! -t 0 ]]; then
+  if command -v ptyxis &>/dev/null; then
+    exec ptyxis -- bash -c "\"$0\""
+  elif command -v foot &>/dev/null; then
+    exec foot bash -c "\"$0\""
+  elif command -v kitty &>/dev/null; then
+    exec kitty bash -c "\"$0\""
+  elif command -v alacritty &>/dev/null; then
+    exec alacritty -e bash -c "\"$0\""
+  elif command -v wezterm &>/dev/null; then
+    exec wezterm start -- bash -c "\"$0\""
+  elif command -v gnome-terminal &>/dev/null; then
+    exec gnome-terminal -- bash -c "\"$0\""
+  else
+    notify-send "Error" "No supported terminal emulator found."
+    exit 1
+  fi
+fi
+
+for cmd in fzf wpctl notify-send; do
+  if ! command -v "$cmd" &>/dev/null; then
+    echo "Error: $cmd is required."
+    read -rn1 -p "Press any key to exit..."
+    exit 1
+  fi
+done
+
+get_vol() {
+  wpctl get-volume @DEFAULT_AUDIO_SINK@ | awk '{printf "%d", $2 * 100}'
+}
+
+notify_vol() {
+  local vol
+  vol=$(get_vol)
+  notify-send -a "Audio" -h int:value:"$vol" -h string:x-dunst-stack-tag:audio "Volume: ${vol}%"
+}
+
+VOL=$(get_vol)
+
+CHOSEN=$(printf "󰓃  Select Output\n󰍬  Select Input (Mic)\n󰔡  Toggle Mute\n󰝝  Set Volume  [${VOL}%%]" | fzf \
+  --prompt="  Audio > " \
+  --height=30% \
+  --border=rounded \
+  --no-multi 2>/dev/null) || exit 0
+
+[[ -z "$CHOSEN" ]] && exit 0
+
+case "$CHOSEN" in
+*"Select Output")
+  SINK_LIST=$(wpctl status | sed -n '/Sinks:/,/Sources:/p' | grep -E '[0-9]+\.' | sed 's/[│├└─]//g; s/^[[:space:]]*//')
+  if [[ -z "$SINK_LIST" ]]; then
+    echo "No output devices found."
+    sleep 1
+    exit 0
+  fi
+  SEL_SINK=$(echo "$SINK_LIST" | fzf \
+    --prompt="  Output Device > " \
+    --height=40% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || exit 0
+  if [[ -n "$SEL_SINK" ]]; then
+    SINK_ID=$(echo "$SEL_SINK" | grep -oE '^[0-9]+')
+    wpctl set-default "$SINK_ID" && notify-send -a "Audio" "Output: $SEL_SINK"
+  fi
+  ;;
+
+*"Select Input")
+  SOURCE_LIST=$(wpctl status | sed -n '/Sources:/,/Filters:/p' | grep -E '[0-9]+\.' | sed 's/[│├└─]//g; s/^[[:space:]]*//')
+  if [[ -z "$SOURCE_LIST" ]]; then
+    echo "No input devices found."
+    sleep 1
+    exit 0
+  fi
+  SEL_SOURCE=$(echo "$SOURCE_LIST" | fzf \
+    --prompt="  Microphone > " \
+    --height=40% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || exit 0
+  if [[ -n "$SEL_SOURCE" ]]; then
+    SOURCE_ID=$(echo "$SEL_SOURCE" | grep -oE '^[0-9]+')
+    wpctl set-default "$SOURCE_ID" && notify-send -a "Audio" "Mic: $SEL_SOURCE"
+  fi
+  ;;
+
+*"Toggle Mute")
+  wpctl set-mute @DEFAULT_AUDIO_SINK@ toggle
+  notify-send -a "Audio" "Mute Toggled"
+  ;;
+
+*"Set Volume")
+  VOL_VAL=$(seq 0 5 100 | fzf \
+    --prompt="  Set Volume % > " \
+    --height=40% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || exit 0
+  if [[ "$VOL_VAL" =~ ^[0-9]+$ ]] && [[ "$VOL_VAL" -ge 0 ]] && [[ "$VOL_VAL" -le 100 ]]; then
+    wpctl set-volume @DEFAULT_AUDIO_SINK@ "$VOL_VAL%"
+    notify_vol
+  fi
+  ;;
+esac

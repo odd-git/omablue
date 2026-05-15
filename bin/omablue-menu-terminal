@@ -1,0 +1,170 @@
+#!/bin/bash
+set -euo pipefail
+
+# --- 1. Path Setup ---
+HOMEBREW_PATHS="/home/linuxbrew/.linuxbrew/bin:/var/home/linuxbrew/.linuxbrew/bin"
+LOCAL_PATHS="$HOME/.local/bin:$HOME/.local/share/omablue/bin"
+export PATH="$HOMEBREW_PATHS:$LOCAL_PATHS:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$OMABIN:$PATH"
+
+# --- 2. Dependency Check ---
+if ! command -v gum &>/dev/null; then
+  echo "Error: gum is not installed. Install it with: brew install gum"
+  read -n 1 -s -r -p "Press any key to exit..."
+  exit 1
+fi
+
+# --- 3. Style ---
+export GUM_CHOOSE_CURSOR_FOREGROUND="6"
+export GUM_CHOOSE_SELECTED_FOREGROUND="2"
+export GUM_CHOOSE_HEADER_FOREGROUND="4"
+
+# --- 4. Core Functions ---
+
+menu() {
+  local header="$1"
+  shift
+  gum choose \
+    --header="  $header" \
+    --cursor="> " \
+    "$@" 2>/dev/null || echo ""
+}
+
+confirm() {
+  local prompt="$1"
+  gum confirm "$prompt" 2>/dev/null
+}
+
+run_script() {
+  local script_path="$1"
+  if [[ -x "$script_path" ]]; then
+    "$script_path"
+  else
+    gum style --foreground 1 "Error: Script not found: $(basename "$script_path")"
+    sleep 1
+  fi
+}
+
+# --- 5. App Launcher ---
+
+show_app_launcher() {
+  if command -v fzf &>/dev/null; then
+    # Gather .desktop app names from standard locations
+    local apps
+    apps=$(find /usr/share/applications ~/.local/share/applications /var/lib/flatpak/exports/share/applications \
+      -name "*.desktop" 2>/dev/null \
+      | xargs -I{} grep -h "^Name=" {} 2>/dev/null \
+      | sed 's/^Name=//' | sort -u)
+
+    local choice
+    choice=$(echo "$apps" | fzf --prompt="  Launch > " --height=40% --border --reverse) || return
+
+    # Find the .desktop file for the chosen app and launch it
+    local desktop_file
+    desktop_file=$(find /usr/share/applications ~/.local/share/applications /var/lib/flatpak/exports/share/applications \
+      -name "*.desktop" 2>/dev/null \
+      | xargs -I{} grep -l "^Name=$choice$" {} 2>/dev/null | head -1)
+
+    if [[ -n "$desktop_file" ]]; then
+      gtk-launch "$(basename "$desktop_file" .desktop)" &
+    else
+      gum style --foreground 1 "Could not find app: $choice"
+      sleep 1
+    fi
+  else
+    gum style --foreground 3 "fzf not found. Install it with: brew install fzf"
+    sleep 2
+  fi
+}
+
+# --- 6. Submenus ---
+
+show_install_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Install" "Webapp" "Brew" "Tui" "Flatpak" "< Back")
+    case "${choice,,}" in
+    *webapp*) run_script "$OMABIN/omablue-webapp-install" ;;
+    *brew*)   run_script "$OMABIN/omablue-brew-install" ;;
+    *tui*)    run_script "$OMABIN/omablue-tui-install" ;;
+    *flatpak*) run_script "$OMABIN/omablue-flatpak-install" ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+show_remove_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Remove" "Webapp" "Brew" "Tui" "Flatpak" "< Back")
+    case "${choice,,}" in
+    *webapp*) run_script "$OMABIN/omablue-webapp-remove" ;;
+    *brew*)   run_script "$OMABIN/omablue-brew-remove" ;;
+    *tui*)    run_script "$OMABIN/omablue-tui-remove" ;;
+    *flatpak*) run_script "$OMABIN/omablue-flatpak-remove" ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+show_setup_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Setup" "Theme" "Bluetooth" "Mixer" "Network" "Sync Setup" "Ujust" "Sync" "< Back")
+    case "${choice,,}" in
+    *theme*)      run_script "$OMABIN/omablue-theme-selector" ;;
+    *bluetooth*)  run_script "$OMABIN/omablue-bluetooth" ;;
+    *mixer*)      run_script "$OMABIN/omablue-mixer" ;;
+    *network*)    run_script "$OMABIN/omablue-nmcli" ;;
+    *sync\ setup*) run_script "$OMABIN/omasync-setup" ;;
+    *ujust*)      run_script "$OMABIN/omablue-install-ujust" ;;
+    *sync*)       run_script "$OMABIN/omasync" ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+show_system_menu() {
+  while true; do
+    local choice
+    choice=$(menu "System" "Lock" "Restart" "Shutdown" "< Back")
+    case "${choice,,}" in
+    *lock*)
+      swaylock
+      return
+      ;;
+    *restart*)
+      if confirm "Reboot the system?"; then
+        systemctl reboot
+      fi
+      ;;
+    *shutdown*)
+      if confirm "Shut down the system?"; then
+        systemctl poweroff
+      fi
+      ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+# --- 7. Main Menu ---
+
+show_main_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Omablue" "Apps" "Install" "Remove" "Setup" "System" "Quit")
+    case "${choice,,}" in
+    *apps*)    show_app_launcher ;;
+    *install*) show_install_menu ;;
+    *remove*)  show_remove_menu ;;
+    *setup*)   show_setup_menu ;;
+    *system*)  show_system_menu ;;
+    *quit*|"") exit 0 ;;
+    esac
+  done
+}
+
+show_main_menu

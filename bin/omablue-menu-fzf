@@ -1,0 +1,168 @@
+#!/bin/bash
+set -euo pipefail
+
+HOMEBREW_PATHS="/home/linuxbrew/.linuxbrew/bin:/var/home/linuxbrew/.linuxbrew/bin"
+LOCAL_PATHS="$HOME/.local/bin:$HOME/.local/share/omablue/bin"
+export PATH="$HOMEBREW_PATHS:$LOCAL_PATHS:/usr/local/bin:/usr/bin:/bin:$PATH"
+
+OMABIN="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+export PATH="$OMABIN:$PATH"
+
+# --- Self-spawn terminal if not running in one ---
+if [[ ! -t 0 ]]; then
+  if command -v ptyxis &>/dev/null; then
+    exec ptyxis -- bash -c "\"$0\""
+  elif command -v foot &>/dev/null; then
+    exec foot bash -c "\"$0\""
+  elif command -v kitty &>/dev/null; then
+    exec kitty bash -c "\"$0\""
+  elif command -v alacritty &>/dev/null; then
+    exec alacritty -e bash -c "\"$0\""
+  elif command -v wezterm &>/dev/null; then
+    exec wezterm start -- bash -c "\"$0\""
+  elif command -v gnome-terminal &>/dev/null; then
+    exec gnome-terminal -- bash -c "\"$0\""
+  elif command -v xterm &>/dev/null; then
+    exec xterm -e bash -c "\"$0\""
+  else
+    notify-send "Error" "No supported terminal emulator found."
+    exit 1
+  fi
+fi
+
+# --- Dependency check ---
+if ! command -v fzf &>/dev/null; then
+  echo "Error: fzf is required. Install it with: brew install fzf"
+  read -rn1 -p "Press any key to exit..."
+  exit 1
+fi
+
+# --- Core functions ---
+
+menu() {
+  local header="$1"
+  shift
+  printf "%s\n" "$@" | fzf \
+    --prompt="  $header > " \
+    --height=40% \
+    --border=rounded \
+    --no-multi \
+    --exit-0 2>/dev/null || echo ""
+}
+
+confirm() {
+  local prompt="$1"
+  local answer
+  answer=$(printf "Yes\nNo" | fzf \
+    --prompt="  $prompt > " \
+    --height=10% \
+    --border=rounded \
+    --no-multi 2>/dev/null) || return 1
+  [[ "$answer" == "Yes" ]]
+}
+
+run_script() {
+  local script_path="$1"
+  if [[ -x "$script_path" ]]; then
+    "$script_path"
+  else
+    echo "Error: Script not found: $(basename "$script_path")"
+    sleep 1
+  fi
+}
+
+# --- App launcher ---
+
+show_app_launcher() {
+  run_script "$OMABIN/omablue-app-launcher-fzf"
+}
+
+# --- Submenus ---
+
+show_install_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Install" "Webapp" "Brew" "Tui" "Flatpak" "< Back")
+    case "${choice,,}" in
+    *webapp*)  run_script "$OMABIN/omablue-webapp-install" ;;
+    *brew*)    run_script "$OMABIN/omablue-brew-install" ;;
+    *tui*)     run_script "$OMABIN/omablue-tui-install" ;;
+    *flatpak*) run_script "$OMABIN/omablue-flatpak-install" ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+show_remove_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Remove" "Webapp" "Brew" "Tui" "Flatpak" "< Back")
+    case "${choice,,}" in
+    *webapp*)  run_script "$OMABIN/omablue-webapp-remove" ;;
+    *brew*)    run_script "$OMABIN/omablue-brew-remove" ;;
+    *tui*)     run_script "$OMABIN/omablue-tui-remove" ;;
+    *flatpak*) run_script "$OMABIN/omablue-flatpak-remove" ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+show_setup_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Setup" "Theme" "Bluetooth" "Mixer" "Network" "Sync Setup" "Ujust" "Sync" "< Back")
+    case "${choice,,}" in
+    *theme*)       run_script "$OMABIN/omablue-theme-selector" ;;
+    *bluetooth*)   run_script "$OMABIN/omablue-bluetooth" ;;
+    *mixer*)       run_script "$OMABIN/omablue-mixer" ;;
+    *network*)     run_script "$OMABIN/omablue-nmcli" ;;
+    *sync\ setup*) run_script "$OMABIN/omasync-setup" ;;
+    *ujust*)       run_script "$OMABIN/omablue-install-ujust" ;;
+    *sync*)        run_script "$OMABIN/omasync" ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+show_system_menu() {
+  while true; do
+    local choice
+    choice=$(menu "System" "Lock" "Restart" "Shutdown" "< Back")
+    case "${choice,,}" in
+    *lock*)
+      swaylock
+      return
+      ;;
+    *restart*)
+      if confirm "Reboot the system?"; then
+        systemctl reboot
+      fi
+      ;;
+    *shutdown*)
+      if confirm "Shut down the system?"; then
+        systemctl poweroff
+      fi
+      ;;
+    *back*|"") return ;;
+    esac
+  done
+}
+
+# --- Main menu ---
+
+show_main_menu() {
+  while true; do
+    local choice
+    choice=$(menu "Omablue" "Apps" "Install" "Remove" "Setup" "System" "Quit")
+    case "${choice,,}" in
+    *apps*)    show_app_launcher ;;
+    *install*) show_install_menu ;;
+    *remove*)  show_remove_menu ;;
+    *setup*)   show_setup_menu ;;
+    *system*)  show_system_menu ;;
+    *quit*|"") exit 0 ;;
+    esac
+  done
+}
+
+show_main_menu

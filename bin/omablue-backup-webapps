@@ -1,0 +1,172 @@
+#!/bin/bash
+# Omablue Webapp & Profile Backup Script
+# Creates a complete backup of webapps and Trivalent profiles for restoration
+
+set -euo pipefail
+
+# --- Logging functions ---
+msg()  { printf '%s\n' "$1"; }
+ok()   { printf '  [OK] %s\n' "$1"; }
+warn() { printf '  [!!] %s\n' "$1" >&2; }
+err()  { printf '  [ERROR] %s\n' "$1" >&2; }
+die()  { err "$1"; exit 1; }
+
+# --- Setup ---
+APPS_DIR="$HOME/.local/share/applications"
+ICONS_DIR="$APPS_DIR/icons"
+TRIVALENT_DIR="$HOME/.config/trivalent"
+OUTPUT_DIR="${1:-.}"
+TIMESTAMP=$(date +%Y%m%d-%H%M%S)
+BACKUP_NAME="omablue-backup-${TIMESTAMP}"
+TEMP_DIR=$(mktemp -d)
+
+trap 'rm -rf "$TEMP_DIR"' EXIT
+
+msg ""
+msg "Omablue Webapp & Profile Backup"
+msg "════════════════════════════════════"
+
+# Check dependencies
+for cmd in jq tar gzip; do
+    command -v "$cmd" &>/dev/null || die "Required command not found: $cmd"
+done
+ok "Dependencies available"
+
+# Check output directory
+[[ -d "$OUTPUT_DIR" ]] || mkdir -p "$OUTPUT_DIR" || die "Cannot create output directory"
+ok "Output directory ready"
+
+# --- Step 1: Scan webapps ---
+msg ""
+msg "Step 1: Scanning webapps..."
+
+declare -a WEBAPP_DATA=()
+
+# Use find + xargs to properly handle filenames with spaces
+find "$APPS_DIR" -maxdepth 1 -name "*.desktop" -type f -print0 | xargs -0 grep -l "omablue-launch-webapp" 2>/dev/null | while IFS= read -r desktop_file; do
+    [[ -z "$desktop_file" ]] && continue
+
+    # Extract fields from .desktop file
+    name=$(grep "^Name=" "$desktop_file" | head -1 | cut -d= -f2-)
+    icon=$(grep "^Icon=" "$desktop_file" | head -1 | cut -d= -f2-)
+    exec_line=$(grep "^Exec=" "$desktop_file" | head -1)
+
+    # Parse Exec: omablue-launch-webapp 'URL' 'PROFILE' 'BROWSER'
+    exec_clean="${exec_line#*omablue-launch-webapp }"
+    url=$(echo "$exec_clean" | awk -F"'" '{print $2}')
+    profile=$(echo "$exec_clean" | awk -F"'" '{print $4}')
+    browser=$(echo "$exec_clean" | awk -F"'" '{print $6}')
+
+    [[ -z "$name" ]] && continue
+    [[ -z "$url" ]] && continue
+    [[ -z "$profile" ]] && continue
+
+    # Write to file with TAB separator (since we're in a subshell from pipe)
+    printf '%s\t%s\t%s\t%s\t%s\n' "$name" "$url" "$profile" "$browser" "$icon" >> "$TEMP_DIR/.webapps"
+done
+
+# Count webapps
+WEBAPP_COUNT=$(wc -l < "$TEMP_DIR/.webapps" 2>/dev/null || echo 0)
+ok "Found $WEBAPP_COUNT webapps"
+
+[[ $WEBAPP_COUNT -gt 0 ]] || die "No webapps found to backup"
+
+# --- Step 2: Build manifest JSON ---
+msg ""
+msg "Step 2: Building manifest..."
+
+MANIFEST="$TEMP_DIR/manifest.json"
+{
+    echo "{"
+    echo "  \"generated\": \"$(date -u +"%Y-%m-%dT%H:%M:%SZ")\","
+    echo "  \"format_version\": \"1.0\","
+    echo "  \"webapp_count\": $WEBAPP_COUNT,"
+    echo "  \"webapps\": ["
+
+    LINE_NUM=0
+    while IFS=$'\t' read -r name url profile browser icon; do
+        # Escape quotes for JSON
+        name="${name//\"/\\\"}"
+        url="${url//\"/\\\"}"
+        icon="${icon//\"/\\\"}"
+
+        cat <<ENTRY
+    {
+      "name": "$name",
+      "url": "$url",
+      "profile": "$profile",
+      "browser": "$browser",
+      "icon": "$icon"
+    }
+ENTRY
+
+        ((LINE_NUM++))
+        if [[ $LINE_NUM -lt $WEBAPP_COUNT ]]; then
+            echo ","
+        else
+            echo ""
+        fi
+    done < "$TEMP_DIR/.webapps"
+
+    echo "  ]"
+    echo "}"
+} > "$MANIFEST"
+
+# Validate JSON
+jq empty "$MANIFEST" || die "Generated manifest JSON is invalid"
+ok "Manifest created and validated"
+
+# --- Step 3: Prepare backup directory ---
+msg ""
+msg "Step 3: Preparing backup..."
+
+BACKUP_DIR="$TEMP_DIR/$BACKUP_NAME"
+mkdir -p "$BACKUP_DIR"
+
+# Copy manifest
+cp "$MANIFEST" "$BACKUP_DIR/manifest.json"
+ok "Manifest included"
+
+# Copy Trivalent profiles
+if [[ -d "$TRIVALENT_DIR" ]]; then
+    cp -r "$TRIVALENT_DIR" "$BACKUP_DIR/trivalent" 2>/dev/null || die "Failed to copy Trivalent profiles"
+    TRIV_SIZE=$(du -sh "$BACKUP_DIR/trivalent" 2>/dev/null | cut -f1)
+    ok "Trivalent profiles copied ($TRIV_SIZE)"
+else
+    warn "Trivalent directory not found"
+fi
+
+# Copy icons
+if [[ -d "$ICONS_DIR" ]]; then
+    mkdir -p "$BACKUP_DIR/icons"
+    find "$ICONS_DIR" -maxdepth 1 -name "*.png" -type f -exec cp {} "$BACKUP_DIR/icons/" \; 2>/dev/null
+    ICON_COUNT=$(find "$BACKUP_DIR/icons" -name "*.png" -type f 2>/dev/null | wc -l)
+    [[ $ICON_COUNT -gt 0 ]] && ok "Icons copied ($ICON_COUNT PNG files)"
+fi
+
+# --- Step 4: Create archive ---
+msg ""
+msg "Step 4: Creating archive..."
+
+ARCHIVE_PATH="$OUTPUT_DIR/${BACKUP_NAME}.tar.gz"
+cd "$OUTPUT_DIR" || die "Cannot cd to output directory"
+tar -czf "${BACKUP_NAME}.tar.gz" -C "$TEMP_DIR" "$BACKUP_NAME" || die "Failed to create archive"
+
+# Verify archive
+tar -tzf "$ARCHIVE_PATH" >/dev/null || die "Archive verification failed"
+ARCHIVE_SIZE=$(du -sh "$ARCHIVE_PATH" | cut -f1)
+ok "Archive created ($ARCHIVE_SIZE)"
+
+# --- Summary ---
+msg ""
+msg "════════════════════════════════════"
+msg "Backup completed successfully!"
+msg "════════════════════════════════════"
+msg ""
+msg "  Archive: $ARCHIVE_PATH"
+msg "  Size: $ARCHIVE_SIZE"
+msg "  Webapps: $WEBAPP_COUNT"
+msg ""
+msg "To restore:"
+msg "  omablue-restore-webapps $ARCHIVE_PATH"
+msg ""
